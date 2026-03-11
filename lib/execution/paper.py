@@ -7,6 +7,7 @@ from decimal import Decimal
 
 from broker.base import Broker
 from broker.simulated import SimulatedBroker
+from constants import TIMEFRAME_MINUTES
 from data.price_panel import PricePanel
 from data.universe import Universe
 from execution.context import ExecutionContext
@@ -106,9 +107,7 @@ class PaperContext(ExecutionContext):
         self._panel = PricePanel(self._universe, lookback=strategy.lookback())
 
         end = datetime.now(timezone.utc)
-        tf_minutes = {"1m": 1, "5m": 5, "15m": 15, "30m": 30,
-                      "1h": 60, "4h": 240, "1d": 1440}
-        minutes = tf_minutes.get(timeframe, 60)
+        minutes = TIMEFRAME_MINUTES.get(timeframe, 60)
         start = end - timedelta(minutes=int(minutes * warmup_bars * 1.2))
 
         # Fetch historical bars for each symbol

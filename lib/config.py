@@ -4,9 +4,7 @@ import os
 from decimal import Decimal
 
 
-class ConfigError(Exception):
-    """Raised when required configuration is missing or invalid."""
-    pass
+from exceptions import ConfigError  # noqa: F401 — re-exported for backwards compat
 
 
 # -- Exchange credentials --
