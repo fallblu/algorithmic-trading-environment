@@ -41,8 +41,11 @@ def run(
     # Ensure sma_crossover is registered
     import strategy.sma_crossover  # noqa: F401
 
+    from helpers import market_data_dir, parse_symbols, require_data
+
     strategy_class = get_strategy(strategy)
-    symbol_list = [s.strip() for s in symbols.split(",")]
+    symbol_list = parse_symbols(symbols)
+    require_data(env.path, "kraken", symbol_list, timeframe)
     universe = Universe.from_symbols(symbol_list, timeframe)
 
     grid_params = json.loads(grid)
@@ -60,7 +63,7 @@ def run(
         grid=param_grid,
         initial_cash=Decimal(initial_cash),
         n_workers=n_workers or None,
-        data_dir=Path(env.path) / ".persistra" / "market_data",
+        data_dir=market_data_dir(env.path),
     )
 
     results = batch.run()

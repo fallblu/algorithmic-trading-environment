@@ -20,18 +20,22 @@ def run(env):
         log.warning("Kill switch is already active")
         return
 
-    daily_pnl = env.state.get("daily_pnl", 0.0)
-    max_drawdown = env.state.get("max_drawdown", 0.0)
+    from config import RISK_DEFAULTS
 
-    # Check daily loss limit (configurable, default -500)
-    daily_loss_limit = float(risk_ns.get("daily_loss_limit", -500))
+    daily_pnl = portfolio_ns.get("daily_pnl", 0.0)
+    max_drawdown = portfolio_ns.get("max_drawdown", 0.0)
+
+    # Check daily loss limit (configurable via risk.* state, fallback to config)
+    default_loss = float(RISK_DEFAULTS["daily_loss_limit"])
+    daily_loss_limit = float(risk_ns.get("daily_loss_limit", default_loss))
     if daily_pnl < daily_loss_limit:
         log.critical("DAILY LOSS LIMIT BREACHED: %.2f < %.2f", daily_pnl, daily_loss_limit)
         risk_ns.set("kill_switch", True)
         return
 
-    # Check max drawdown limit (configurable, default 20%)
-    max_dd_limit = float(risk_ns.get("max_drawdown_limit", 0.20))
+    # Check max drawdown limit (configurable via risk.* state, fallback to config)
+    default_dd = float(RISK_DEFAULTS["max_drawdown_limit"])
+    max_dd_limit = float(risk_ns.get("max_drawdown_limit", default_dd))
     if max_drawdown > max_dd_limit:
         log.critical("MAX DRAWDOWN LIMIT BREACHED: %.4f > %.4f", max_drawdown, max_dd_limit)
         risk_ns.set("kill_switch", True)

@@ -37,7 +37,10 @@ def run(
     from execution.backtest import BacktestContext
     from strategy.sma_crossover import SmaCrossover
 
-    symbol_list = [s.strip() for s in symbols.split(",")]
+    from helpers import market_data_dir, parse_symbols, periods_per_year, require_data
+
+    symbol_list = parse_symbols(symbols)
+    require_data(env.path, "kraken", symbol_list, timeframe)
     universe = Universe.from_symbols(symbol_list, timeframe)
 
     start_dt = datetime.fromisoformat(start) if start else datetime(2024, 1, 1, tzinfo=timezone.utc)
@@ -58,7 +61,7 @@ def run(
         fee_rate=Decimal(fee_rate),
         slippage_pct=Decimal(slippage_pct),
         max_position_size=Decimal(max_position_size),
-        data_dir=Path(env.path) / ".persistra" / "market_data",
+        data_dir=market_data_dir(env.path),
     )
 
     strategy = SmaCrossover(ctx, strategy_params)
@@ -67,6 +70,7 @@ def run(
     metrics = compute_performance(
         equity_curve=results["equity_curve"],
         fills=results["fills"],
+        periods_per_year=periods_per_year(timeframe),
     )
 
     # Save equity curve and fills as Parquet

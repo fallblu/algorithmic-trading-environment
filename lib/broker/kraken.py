@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 
 from broker.base import Broker
-from data.kraken_api import SYMBOL_TO_KRAKEN
+from data.universe import get_kraken_specs, resolve_kraken_symbol
 from data.kraken_auth import KrakenAuthError, private_request
 from models.account import Account
 from models.instrument import Instrument
@@ -52,10 +52,7 @@ class KrakenBroker(Broker):
         self._kraken_to_local: dict[str, str] = {}  # kraken txid -> our order ID
 
     def submit_order(self, order: Order) -> Order:
-        pair = SYMBOL_TO_KRAKEN.get(
-            order.instrument.symbol,
-            order.instrument.symbol.replace("/", ""),
-        )
+        pair = resolve_kraken_symbol(order.instrument.symbol)
 
         data = {
             "pair": pair,
@@ -170,6 +167,7 @@ class KrakenBroker(Broker):
         for key, val in result.items():
             balance = Decimal(val)
             if balance > 0 and key not in ("ZUSD", "USD"):
+                specs = get_kraken_specs(key)
                 positions.append(Position(
                     instrument=Instrument(
                         symbol=f"{key}/USD",
@@ -177,9 +175,9 @@ class KrakenBroker(Broker):
                         quote="USD",
                         exchange="kraken",
                         asset_class="crypto",
-                        tick_size=Decimal("0.01"),
-                        lot_size=Decimal("0.00001"),
-                        min_notional=Decimal("5"),
+                        tick_size=Decimal(specs["tick_size"]),
+                        lot_size=Decimal(specs["lot_size"]),
+                        min_notional=Decimal(specs["min_notional"]),
                     ),
                     side=OrderSide.BUY,
                     quantity=balance,

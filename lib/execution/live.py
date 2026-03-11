@@ -18,10 +18,7 @@ log = logging.getLogger(__name__)
 
 def _create_live_feed(exchange: str):
     """Create the appropriate live feed for the given exchange."""
-    if exchange == "kraken_futures":
-        from data.live_futures import LiveFuturesFeed
-        return LiveFuturesFeed()
-    elif exchange == "oanda":
+    if exchange == "oanda":
         from data.live_oanda import LiveOandaFeed
         return LiveOandaFeed()
     else:
@@ -31,10 +28,7 @@ def _create_live_feed(exchange: str):
 
 def _create_live_broker(exchange: str) -> Broker:
     """Create the appropriate broker for the given exchange."""
-    if exchange == "kraken_futures":
-        from broker.kraken_futures import KrakenFuturesBroker
-        return KrakenFuturesBroker()
-    elif exchange == "oanda":
+    if exchange == "oanda":
         from broker.oanda import OandaBroker
         return OandaBroker()
     else:
@@ -45,8 +39,8 @@ def _create_live_broker(exchange: str) -> Broker:
 class LiveContext(ExecutionContext):
     """Live trading: real market data with real broker execution.
 
-    Supports spot (Kraken), futures (Kraken Futures), and forex (OANDA)
-    via exchange auto-detection or explicit exchange parameter.
+    Supports spot (Kraken) and forex (OANDA) via exchange auto-detection
+    or explicit exchange parameter.
 
     Same lifecycle as PaperContext:
         subscribe_all() -> warmup() -> run_once() per daemon tick -> shutdown()

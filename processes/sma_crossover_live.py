@@ -44,7 +44,9 @@ def run(
     from data.universe import Universe
     from strategy.sma_crossover import SmaCrossover
 
-    symbol_list = [s.strip() for s in symbols.split(",")]
+    from helpers import parse_symbols
+
+    symbol_list = parse_symbols(symbols)
     universe = Universe.from_symbols(symbol_list, timeframe)
 
     strategy_params = {
@@ -89,18 +91,37 @@ def run(
         ns.set("last_tick", datetime.now(timezone.utc).isoformat())
 
         if mode == "paper":
-            ns.set("equity", str(result["equity"]))
+            equity = result["equity"]
+            ns.set("equity", str(equity))
             ns.set("bars_processed", result["bars_processed"])
             ns.set("fills", result["fills"])
 
             strat_ns = env.state.ns("strategy.sma_crossover")
             strat_ns.set("mode", mode)
-            strat_ns.set("equity", str(result["equity"]))
+            strat_ns.set("equity", str(equity))
+
+            # Update portfolio metrics for risk monitor
+            portfolio_ns = env.state.ns("portfolio")
+            current_date = datetime.now(timezone.utc).date().isoformat()
+            last_date = portfolio_ns.get("current_date", "")
+            if current_date != last_date:
+                portfolio_ns.set("day_start_equity", str(equity))
+                portfolio_ns.set("current_date", current_date)
+
+            day_start = Decimal(portfolio_ns.get("day_start_equity", str(equity)))
+            portfolio_ns.set("daily_pnl", float(equity - day_start))
+
+            peak = Decimal(portfolio_ns.get("peak_equity", str(equity)))
+            if equity > peak:
+                peak = equity
+                portfolio_ns.set("peak_equity", str(peak))
+            max_dd = float((peak - equity) / peak) if peak > 0 else 0.0
+            portfolio_ns.set("max_drawdown", max_dd)
 
             if result["bars_processed"] > 0:
                 log.info(
                     "Tick: %d bars, %d fills, equity=%s",
-                    result["bars_processed"], result["fills"], result["equity"],
+                    result["bars_processed"], result["fills"], equity,
                 )
         elif mode == "live":
             ns.set("account", result.get("account", {}))

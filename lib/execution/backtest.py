@@ -12,7 +12,6 @@ from data.price_panel import PricePanel
 from data.store import MarketDataStore
 from data.universe import Universe
 from execution.context import ExecutionContext
-from models.instrument import FuturesInstrument
 from risk.manager import RiskManager
 from strategy.base import Strategy
 
@@ -26,7 +25,7 @@ class BacktestContext(ExecutionContext):
     groups them by timestamp, processes through SimulatedBroker, then
     calls strategy.on_bar() with a PricePanel window.
 
-    Supports spot, futures (margin mode), and forex (spread simulation).
+    Supports spot and forex (spread simulation).
     """
 
     mode = "backtest"
@@ -42,7 +41,7 @@ class BacktestContext(ExecutionContext):
         max_position_size: Decimal = Decimal("1.0"),
         data_dir: Path | None = None,
         exchange: str | None = None,
-        margin_mode: bool | None = None,
+        margin_mode: bool = False,
         leverage: Decimal = Decimal("1"),
         spread_pips: Decimal = Decimal("0"),
     ):
@@ -57,13 +56,6 @@ class BacktestContext(ExecutionContext):
         if exchange is None:
             first_inst = next(iter(universe.instruments.values()), None)
             exchange = first_inst.exchange if first_inst else "kraken"
-
-        # Auto-detect margin mode from universe instruments
-        if margin_mode is None:
-            margin_mode = any(
-                isinstance(inst, FuturesInstrument)
-                for inst in universe.instruments.values()
-            )
 
         self._exchange = exchange
         self._store = MarketDataStore(data_dir)
@@ -80,7 +72,6 @@ class BacktestContext(ExecutionContext):
         self._current_time = datetime.now(timezone.utc)
         self._equity_curve: list[tuple[datetime, Decimal]] = []
         self._bars_processed: int = 0
-        self._last_funding_time: datetime | None = None
 
     def get_universe(self) -> Universe:
         return self._universe
@@ -123,7 +114,6 @@ class BacktestContext(ExecutionContext):
         # Record initial equity
         initial_equity = self._broker.get_account().equity
         first_group = True
-        is_futures = self._broker.margin_mode
 
         while True:
             bar_group = self._feed.next_bar_group()
@@ -134,19 +124,7 @@ class BacktestContext(ExecutionContext):
 
             if first_group:
                 self._equity_curve.append((self._current_time, initial_equity))
-                self._last_funding_time = self._current_time
                 first_group = False
-
-            # Apply funding rate at 8-hour intervals for futures
-            if is_futures and self._last_funding_time is not None:
-                hours_elapsed = (self._current_time - self._last_funding_time).total_seconds() / 3600
-                if hours_elapsed >= 8:
-                    for bar in bar_group:
-                        self._broker.apply_funding(
-                            bar.instrument_symbol,
-                            Decimal("0.0001"),  # Default funding rate
-                        )
-                    self._last_funding_time = self._current_time
 
             # 1. Process pending orders against all bars at this timestamp
             self._broker.process_bars(bar_group)

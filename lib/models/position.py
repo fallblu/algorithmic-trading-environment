@@ -14,8 +14,7 @@ class Position:
     entry_price: Decimal = Decimal("0")      # Volume-weighted avg entry
     unrealized_pnl: Decimal = Decimal("0")
     realized_pnl: Decimal = Decimal("0")
-    margin_used: Decimal = Decimal("0")      # For futures
-    liquidation_price: Decimal | None = None # For futures
+    margin_used: Decimal = Decimal("0")      # For margin/leverage mode
     opened_at: datetime = field(default_factory=datetime.now)
     last_updated: datetime = field(default_factory=datetime.now)
 

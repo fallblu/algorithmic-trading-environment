@@ -22,18 +22,6 @@ def get_kraken_credentials() -> tuple[str, str]:
     return api_key, api_secret
 
 
-def get_kraken_futures_credentials() -> tuple[str, str]:
-    """Load Kraken Futures API credentials from env vars."""
-    api_key = os.environ.get("KRAKEN_FUTURES_API_KEY")
-    api_secret = os.environ.get("KRAKEN_FUTURES_API_SECRET")
-    if not api_key or not api_secret:
-        raise ConfigError(
-            "KRAKEN_FUTURES_API_KEY and KRAKEN_FUTURES_API_SECRET must be set "
-            "for Kraken Futures."
-        )
-    return api_key, api_secret
-
-
 def get_oanda_credentials() -> tuple[str, str, str]:
     """Load OANDA API credentials from env vars.
 
@@ -64,12 +52,6 @@ EXCHANGE_DEFAULTS: dict[str, dict] = {
         "fee_rate": Decimal("0.0026"),
         "slippage_pct": Decimal("0.0001"),
         "quote_currency": "USD",
-    },
-    "kraken_futures": {
-        "fee_rate": Decimal("0.0005"),
-        "slippage_pct": Decimal("0.0001"),
-        "quote_currency": "USD",
-        "default_leverage": Decimal("10"),
     },
     "oanda": {
         "fee_rate": Decimal("0"),

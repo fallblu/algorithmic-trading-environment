@@ -25,35 +25,6 @@ optional_packages = [
 ]
 
 [state.schema]
-# Account
+# Account — legitimately global state with history tracking
 account_balances = { type = "dict", default = {}, history = 100 }
 account_equity = { type = "float", default = 0.0, history = 1000 }
-
-# Portfolio-level
-total_exposure = { type = "float", default = 0.0 }
-daily_pnl = { type = "float", default = 0.0, history = 365 }
-max_drawdown = { type = "float", default = 0.0 }
-
-# Execution mode
-execution_mode = { type = "str", default = "backtest" }
-
-# Backtest universe
-backtest_symbols = { type = "str", default = "BTC/USD" }
-
-# Data ingestor
-last_update = { type = "str", default = "" }
-
-# Analysis
-analysis_symbol = { type = "str", default = "BTC/USD" }
-analysis_timeframe = { type = "str", default = "1h" }
-analysis_exchange = { type = "str", default = "kraken" }
-
-# Scanning
-scan_symbols = { type = "str", default = "BTC/USD,ETH/USD" }
-scan_timeframe = { type = "str", default = "1h" }
-scan_exchange = { type = "str", default = "kraken" }
-
-# Correlation
-correlation_symbols = { type = "str", default = "BTC/USD,ETH/USD" }
-correlation_timeframe = { type = "str", default = "1h" }
-correlation_exchange = { type = "str", default = "kraken" }

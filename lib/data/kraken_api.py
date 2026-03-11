@@ -20,13 +20,7 @@ TIMEFRAME_MINUTES = {
     "1w": 10080,
 }
 
-# Kraken uses different pair names than our symbol format
-SYMBOL_TO_KRAKEN = {
-    "BTC/USD": "XBTUSD",
-    "ETH/USD": "ETHUSD",
-    "SOL/USD": "SOLUSD",
-    "XRP/USD": "XRPUSD",
-}
+from data.universe import resolve_kraken_symbol
 
 BASE_URL = "https://api.kraken.com/0/public"
 
@@ -52,7 +46,7 @@ def fetch_ohlcv(
     Returns:
         List of Bar objects sorted by timestamp ascending.
     """
-    kraken_pair = SYMBOL_TO_KRAKEN.get(symbol, symbol.replace("/", ""))
+    kraken_pair = resolve_kraken_symbol(symbol)
     interval = TIMEFRAME_MINUTES.get(timeframe)
     if interval is None:
         raise ValueError(f"Unsupported timeframe: {timeframe}")

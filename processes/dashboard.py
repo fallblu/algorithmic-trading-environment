@@ -30,8 +30,9 @@ def run(
         return
 
     from dashboard.app import create_app
+    from helpers import market_data_dir
 
-    data_dir = Path(env.path) / ".persistra" / "market_data"
+    data_dir = market_data_dir(env.path)
     app = create_app(env=env, data_dir=data_dir)
 
     log.info("Starting dashboard on %s:%d", host, port)

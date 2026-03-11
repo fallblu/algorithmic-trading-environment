@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 from decimal import Decimal
 
-from models.instrument import FuturesInstrument, Instrument
+from models.instrument import Instrument
 
 
 # Sensible defaults for common Kraken pairs
@@ -21,19 +21,6 @@ _KRAKEN_DEFAULTS: dict[str, dict] = {
 
 _DEFAULT_SPECS = {"tick_size": "0.01", "lot_size": "0.001", "min_notional": "5"}
 
-# Kraken Futures defaults
-_KRAKEN_FUTURES_DEFAULTS: dict[str, dict] = {
-    "BTC-PERP": {"tick_size": "0.5", "lot_size": "0.001", "min_notional": "5", "max_leverage": "50"},
-    "ETH-PERP": {"tick_size": "0.01", "lot_size": "0.01", "min_notional": "5", "max_leverage": "50"},
-    "SOL-PERP": {"tick_size": "0.001", "lot_size": "0.1", "min_notional": "5", "max_leverage": "25"},
-    "XRP-PERP": {"tick_size": "0.0001", "lot_size": "10", "min_notional": "5", "max_leverage": "25"},
-    "DOGE-PERP": {"tick_size": "0.00001", "lot_size": "100", "min_notional": "5", "max_leverage": "10"},
-    "ADA-PERP": {"tick_size": "0.0001", "lot_size": "10", "min_notional": "5", "max_leverage": "10"},
-    "AVAX-PERP": {"tick_size": "0.001", "lot_size": "0.1", "min_notional": "5", "max_leverage": "10"},
-    "DOT-PERP": {"tick_size": "0.001", "lot_size": "1", "min_notional": "5", "max_leverage": "10"},
-    "LINK-PERP": {"tick_size": "0.001", "lot_size": "1", "min_notional": "5", "max_leverage": "10"},
-}
-
 # OANDA forex defaults with pip-based tick sizes
 _OANDA_DEFAULTS: dict[str, dict] = {
     "EUR/USD": {"tick_size": "0.00001", "lot_size": "1", "min_notional": "1"},
@@ -47,6 +34,26 @@ _OANDA_DEFAULTS: dict[str, dict] = {
     "EUR/JPY": {"tick_size": "0.001", "lot_size": "1", "min_notional": "1"},
     "GBP/JPY": {"tick_size": "0.001", "lot_size": "1", "min_notional": "1"},
 }
+
+
+# -- Symbol mappings: our format -> exchange API format --
+
+KRAKEN_SYMBOL_MAP = {
+    "BTC/USD": "XBTUSD",
+    "ETH/USD": "ETHUSD",
+    "SOL/USD": "SOLUSD",
+    "XRP/USD": "XRPUSD",
+}
+
+
+def resolve_kraken_symbol(symbol: str) -> str:
+    """Map our symbol (e.g. BTC/USD) to the Kraken API pair name."""
+    return KRAKEN_SYMBOL_MAP.get(symbol, symbol.replace("/", ""))
+
+
+def get_kraken_specs(base: str) -> dict[str, str]:
+    """Get instrument specs for a Kraken spot base currency."""
+    return _KRAKEN_DEFAULTS.get(base, dict(_DEFAULT_SPECS))
 
 
 @dataclass(frozen=True)
@@ -83,34 +90,6 @@ class Universe:
                 tick_size=Decimal(specs["tick_size"]),
                 lot_size=Decimal(specs["lot_size"]),
                 min_notional=Decimal(specs["min_notional"]),
-            )
-        return cls(instruments=instruments, timeframe=timeframe)
-
-    @classmethod
-    def from_futures_symbols(
-        cls,
-        symbols: list[str],
-        timeframe: str,
-        exchange: str = "kraken_futures",
-    ) -> "Universe":
-        """Build a Universe from futures symbol strings like 'BTC-PERP'."""
-        instruments: dict[str, Instrument] = {}
-        for symbol in symbols:
-            base = symbol.split("-")[0]
-            specs = _KRAKEN_FUTURES_DEFAULTS.get(symbol, {
-                "tick_size": "0.01", "lot_size": "0.001",
-                "min_notional": "5", "max_leverage": "50",
-            })
-            instruments[symbol] = FuturesInstrument(
-                symbol=symbol,
-                base=base,
-                quote="USD",
-                exchange=exchange,
-                asset_class="crypto_futures",
-                tick_size=Decimal(specs["tick_size"]),
-                lot_size=Decimal(specs["lot_size"]),
-                min_notional=Decimal(specs["min_notional"]),
-                max_leverage=Decimal(specs["max_leverage"]),
             )
         return cls(instruments=instruments, timeframe=timeframe)
 

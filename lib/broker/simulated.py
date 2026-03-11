@@ -253,7 +253,6 @@ class SimulatedBroker(Broker):
                 margin = notional / self.leverage
                 pos.margin_used = margin
                 self._account.margin_used += margin
-                pos.liquidation_price = self._calc_liquidation_price(pos)
         elif pos.side == fill.side:
             # Adding to existing position — update VWAP entry
             total_cost = pos.entry_price * pos.quantity + fill.price * fill.quantity
@@ -265,7 +264,6 @@ class SimulatedBroker(Broker):
                 new_margin = fill.price * fill.quantity / self.leverage
                 pos.margin_used += new_margin
                 self._account.margin_used += new_margin
-                pos.liquidation_price = self._calc_liquidation_price(pos)
         else:
             # Reducing or reversing position
             if fill.quantity >= pos.quantity:
@@ -292,11 +290,9 @@ class SimulatedBroker(Broker):
                         margin = fill.price * remaining / self.leverage
                         pos.margin_used = margin
                         self._account.margin_used += margin
-                        pos.liquidation_price = self._calc_liquidation_price(pos)
                 else:
                     pos.quantity = Decimal("0")
                     pos.unrealized_pnl = Decimal("0")
-                    pos.liquidation_price = None
                 pos.last_updated = fill.timestamp
             else:
                 if pos.side == OrderSide.BUY:
@@ -314,9 +310,6 @@ class SimulatedBroker(Broker):
                 pos.quantity -= fill.quantity
                 pos.last_updated = fill.timestamp
 
-                if self.margin_mode and pos.quantity > 0:
-                    pos.liquidation_price = self._calc_liquidation_price(pos)
-
         # Deduct fees from cash
         self._account.balances[self._quote_currency] -= fill.fee
 
@@ -332,44 +325,6 @@ class SimulatedBroker(Broker):
             else:
                 self._account.balances[self._quote_currency] += notional
 
-    def apply_funding(self, symbol: str, funding_rate: Decimal) -> None:
-        """Apply funding rate charges/credits for futures positions.
-
-        Called at 8-hour intervals during backtest/paper.
-        Long + positive rate = pay (debit); Short + positive rate = receive (credit).
-        """
-        pos = self._positions.get(symbol)
-        if pos is None or pos.quantity == 0:
-            return
-
-        notional = pos.quantity * pos.entry_price
-        charge = notional * funding_rate
-
-        if pos.side == OrderSide.BUY:
-            # Long pays positive funding
-            self._account.balances[self._quote_currency] -= charge
-        else:
-            # Short receives positive funding
-            self._account.balances[self._quote_currency] += charge
-
-    def _calc_liquidation_price(self, pos: Position) -> Decimal | None:
-        """Calculate liquidation price based on maintenance margin."""
-        if not self.margin_mode or pos.quantity == 0:
-            return None
-
-        from models.instrument import FuturesInstrument
-        if isinstance(pos.instrument, FuturesInstrument):
-            maint_rate = pos.instrument.maintenance_margin_rate
-        else:
-            maint_rate = Decimal("0.005")
-
-        if pos.side == OrderSide.BUY:
-            # Liquidation when equity = maintenance margin
-            # liq_price = entry * (1 - 1/leverage + maint_rate)
-            return pos.entry_price * (1 - 1 / self.leverage + maint_rate)
-        else:
-            return pos.entry_price * (1 + 1 / self.leverage - maint_rate)
-
     def _update_equity(self, bar: Bar) -> None:
         """Recalculate account equity after processing a bar."""
         cash = self._account.balances.get(self._quote_currency, Decimal("0"))
@@ -382,7 +337,7 @@ class SimulatedBroker(Broker):
         self._account.unrealized_pnl = unrealized
 
         if self.margin_mode:
-            # For futures: equity = cash + unrealized PnL
+            # For leveraged instruments: equity = cash + unrealized PnL
             self._account.equity = cash + unrealized
             self._account.margin_available = self._account.equity - self._account.margin_used
         else:

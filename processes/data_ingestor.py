@@ -20,22 +20,20 @@ def run(
     """Fetch OHLCV bars from an exchange and store in Parquet.
 
     Accepts comma-separated symbols (e.g. "BTC/USD,ETH/USD").
-    Supports exchanges: kraken, kraken_futures, oanda.
+    Supports exchanges: kraken, oanda.
     """
     from data.store import MarketDataStore
+    from helpers import parse_symbols, market_data_dir
 
-    data_dir = Path(env.path) / ".persistra" / "market_data"
+    data_dir = market_data_dir(env.path)
     store = MarketDataStore(data_dir)
 
-    symbol_list = [s.strip() for s in symbols.split(",")]
+    symbol_list = parse_symbols(symbols)
 
     # Select the correct backfill function based on exchange
     if exchange == "kraken":
         from data.kraken_api import backfill_ohlcv
         backfill_fn = backfill_ohlcv
-    elif exchange == "kraken_futures":
-        from data.kraken_futures_api import backfill_ohlcv_futures
-        backfill_fn = backfill_ohlcv_futures
     elif exchange == "oanda":
         from data.oanda_api import backfill_candles
         backfill_fn = backfill_candles

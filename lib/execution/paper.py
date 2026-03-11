@@ -10,7 +10,6 @@ from broker.simulated import SimulatedBroker
 from data.price_panel import PricePanel
 from data.universe import Universe
 from execution.context import ExecutionContext
-from models.instrument import FuturesInstrument
 from risk.manager import RiskManager
 from strategy.base import Strategy
 
@@ -19,10 +18,7 @@ log = logging.getLogger(__name__)
 
 def _create_feed(exchange: str):
     """Create the appropriate live feed for the given exchange."""
-    if exchange == "kraken_futures":
-        from data.live_futures import LiveFuturesFeed
-        return LiveFuturesFeed()
-    elif exchange == "oanda":
+    if exchange == "oanda":
         from data.live_oanda import LiveOandaFeed
         return LiveOandaFeed()
     else:
@@ -33,8 +29,8 @@ def _create_feed(exchange: str):
 class PaperContext(ExecutionContext):
     """Paper trading: live market data with simulated execution.
 
-    Supports spot (Kraken), futures (Kraken Futures), and forex (OANDA)
-    via exchange auto-detection from universe instruments.
+    Supports spot (Kraken) and forex (OANDA) via exchange auto-detection
+    from universe instruments.
 
     Lifecycle:
         1. __init__() — creates LiveFeed and SimulatedBroker
@@ -54,7 +50,7 @@ class PaperContext(ExecutionContext):
         slippage_pct: Decimal = Decimal("0.0001"),
         max_position_size: Decimal = Decimal("1.0"),
         exchange: str | None = None,
-        margin_mode: bool | None = None,
+        margin_mode: bool = False,
         leverage: Decimal = Decimal("1"),
         spread_pips: Decimal = Decimal("0"),
     ):
@@ -67,13 +63,6 @@ class PaperContext(ExecutionContext):
         self._exchange = exchange
 
         self._feed = _create_feed(exchange)
-
-        # Auto-detect margin mode from universe instruments
-        if margin_mode is None:
-            margin_mode = any(
-                isinstance(inst, FuturesInstrument)
-                for inst in universe.instruments.values()
-            )
 
         self._broker = SimulatedBroker(
             initial_cash=initial_cash,

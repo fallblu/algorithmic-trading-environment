@@ -14,11 +14,3 @@ class Bar:
     volume: Decimal
     trades: int | None = None
     vwap: Decimal | None = None
-
-
-@dataclass(frozen=True)
-class FundingRate:
-    instrument_symbol: str
-    timestamp: datetime
-    rate: Decimal
-    next_funding_time: datetime

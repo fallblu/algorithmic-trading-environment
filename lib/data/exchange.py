@@ -65,33 +65,6 @@ class KrakenSpotExchange(Exchange):
         return list(universe.instruments.values())
 
 
-class KrakenFuturesExchange(Exchange):
-    """Kraken perpetual futures exchange adapter."""
-
-    name = "kraken_futures"
-
-    def fetch_ohlcv(self, symbol, timeframe, start=None, end=None):
-        from data.kraken_futures_api import backfill_ohlcv_futures
-        return backfill_ohlcv_futures(
-            symbol=symbol, timeframe=timeframe, start=start, end=end
-        )
-
-    def create_live_feed(self):
-        from data.live_futures import LiveFuturesFeed
-        return LiveFuturesFeed()
-
-    def create_broker(self):
-        from broker.kraken_futures import KrakenFuturesBroker
-        return KrakenFuturesBroker()
-
-    def get_instruments(self):
-        from data.universe import Universe
-        universe = Universe.from_futures_symbols(
-            ["BTC-PERP", "ETH-PERP", "SOL-PERP"], "1h"
-        )
-        return list(universe.instruments.values())
-
-
 class OandaExchange(Exchange):
     """OANDA forex exchange adapter."""
 
@@ -122,7 +95,6 @@ class OandaExchange(Exchange):
 # Registry for resolving exchange by name
 EXCHANGE_REGISTRY: dict[str, type[Exchange]] = {
     "kraken": KrakenSpotExchange,
-    "kraken_futures": KrakenFuturesExchange,
     "oanda": OandaExchange,
 }
 
