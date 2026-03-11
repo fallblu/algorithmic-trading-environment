@@ -17,29 +17,31 @@ def _ensure_lib_path(env):
 
 
 def load_and_validate_data(env):
-    """Verify that market data is available for backtesting."""
+    """Verify that market data is available for all symbols in the universe."""
     _ensure_lib_path(env)
     from data.store import MarketDataStore
 
     data_dir = Path(env.path) / ".persistra" / "market_data"
     store = MarketDataStore(data_dir)
 
-    symbol = env.state.get("backtest_symbol", "BTC/USD")
+    symbols_str = env.state.get("backtest_symbols", "BTC/USD")
+    symbol_list = [s.strip() for s in symbols_str.split(",")]
     timeframe = env.state.get("backtest_timeframe", "1h")
     exchange = env.state.get("backtest_exchange", "kraken")
 
-    if not store.has_data(exchange, symbol, timeframe):
-        raise RuntimeError(
-            f"No market data available for {symbol} {timeframe} on {exchange}. "
-            "Run the data_ingestor process first."
-        )
+    for symbol in symbol_list:
+        if not store.has_data(exchange, symbol, timeframe):
+            raise RuntimeError(
+                f"No market data available for {symbol} {timeframe} on {exchange}. "
+                "Run the data_ingestor process first."
+            )
 
-    date_range = store.get_date_range(exchange, symbol, timeframe)
-    if date_range is not None:
-        start, end = date_range
-        log.info("Data available for %s %s: %s to %s", symbol, timeframe, start, end)
+        date_range = store.get_date_range(exchange, symbol, timeframe)
+        if date_range is not None:
+            start, end = date_range
+            log.info("Data available for %s %s: %s to %s", symbol, timeframe, start, end)
 
-    return {"symbol": symbol, "timeframe": timeframe, "exchange": exchange}
+    return {"symbols": symbols_str, "timeframe": timeframe, "exchange": exchange}
 
 
 def compute_performance_analytics(env, **kwargs):
@@ -52,6 +54,7 @@ def compute_performance_analytics(env, **kwargs):
         return
 
     log.info("=== Backtest Performance Summary ===")
+    log.info("Universe:         %s", ns.get("universe", "unknown"))
     log.info("Total Return:     %.2f%%", results.get("total_return", 0) * 100)
     log.info("Annualized Return: %.2f%%", results.get("annualized_return", 0) * 100)
     log.info("Sharpe Ratio:     %.4f", results.get("sharpe_ratio", 0))

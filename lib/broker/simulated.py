@@ -84,7 +84,7 @@ class SimulatedBroker(Broker):
 
     # -- Simulation engine --
 
-    def process_bar(self, bar: Bar) -> list[Fill]:
+    def process_bar(self, bar: Bar, skip_equity_update: bool = False) -> list[Fill]:
         """Process all open orders against the given bar. Returns new fills."""
         self._current_time = bar.timestamp
         new_fills: list[Fill] = []
@@ -110,10 +110,45 @@ class SimulatedBroker(Broker):
         for oid in to_remove:
             self._open_orders.remove(oid)
 
-        # Update account equity
-        self._update_equity(bar)
+        # Update account equity (unless suppressed for batch processing)
+        if not skip_equity_update:
+            self._update_equity(bar)
 
         return new_fills
+
+    def process_bars(self, bars: list[Bar]) -> list[Fill]:
+        """Process a group of bars (one per symbol at same timestamp).
+
+        Defers equity update until all bars are processed, then does a
+        bulk equity update using latest prices from each symbol.
+        """
+        all_fills: list[Fill] = []
+        for bar in bars:
+            fills = self.process_bar(bar, skip_equity_update=True)
+            all_fills.extend(fills)
+
+        # Bulk equity update with latest prices
+        latest_prices = {bar.instrument_symbol: bar.close for bar in bars}
+        self.update_equity_all(latest_prices)
+        return all_fills
+
+    def update_equity_all(self, latest_prices: dict[str, "Decimal"]) -> None:
+        """Update unrealized PnL for all positions and recalculate equity."""
+        for symbol, price in latest_prices.items():
+            pos = self._positions.get(symbol)
+            if pos is not None and pos.quantity > 0:
+                pos.update_unrealized_pnl(price)
+
+        cash = self._account.balances.get(self._quote_currency, Decimal("0"))
+        unrealized = Decimal("0")
+        position_value = Decimal("0")
+        for pos in self._positions.values():
+            unrealized += pos.unrealized_pnl
+            if pos.quantity > 0:
+                position_value += pos.quantity * pos.entry_price + pos.unrealized_pnl
+
+        self._account.unrealized_pnl = unrealized
+        self._account.equity = cash + position_value
 
     def _try_fill(self, order: Order, bar: Bar) -> Fill | None:
         """Attempt to fill an order against a bar. Returns Fill or None."""

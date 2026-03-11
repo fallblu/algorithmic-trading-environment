@@ -70,6 +70,33 @@ class LiveFeed(DataFeed):
                     self._send_subscribe(instrument, timeframe), self._loop
                 )
 
+    def subscribe_all(self, instruments: list[Instrument], timeframe: str) -> None:
+        """Batch-subscribe to multiple instruments.
+
+        Kraken WS v2 accepts a list of symbols in a single subscribe message,
+        so we batch them for efficiency.
+        """
+        if timeframe not in TIMEFRAME_MINUTES:
+            raise ValueError(f"Unsupported timeframe: {timeframe}")
+
+        for instrument in instruments:
+            self._subscriptions.append((instrument, timeframe))
+
+        if self._ws_thread is None:
+            self._ws_thread = threading.Thread(
+                target=self._run_ws_loop,
+                name="LiveFeed-WS",
+                daemon=True,
+            )
+            self._ws_thread.start()
+            if not self._connected.wait(timeout=10.0):
+                log.warning("WebSocket connection not confirmed within 10s")
+        else:
+            if self._loop is not None:
+                asyncio.run_coroutine_threadsafe(
+                    self._send_subscribe_batch(instruments, timeframe), self._loop
+                )
+
     def next_bar(self) -> Bar | None:
         """Get the next completed bar from the WebSocket stream.
 
@@ -198,6 +225,22 @@ class LiveFeed(DataFeed):
         if self._ws is not None:
             await self._ws.send(json.dumps(msg))
             log.info("Subscribed to ohlc %s interval=%d", instrument.symbol, interval)
+
+    async def _send_subscribe_batch(self, instruments: list[Instrument], timeframe: str) -> None:
+        """Send a single OHLC subscription for multiple symbols."""
+        interval = TIMEFRAME_MINUTES[timeframe]
+        symbols = [inst.symbol for inst in instruments]
+        msg = {
+            "method": "subscribe",
+            "params": {
+                "channel": "ohlc",
+                "symbol": symbols,
+                "interval": interval,
+            },
+        }
+        if self._ws is not None:
+            await self._ws.send(json.dumps(msg))
+            log.info("Subscribed to ohlc %s interval=%d", symbols, interval)
 
     def _handle_message(self, raw_msg: str) -> None:
         """Parse a WebSocket message and enqueue completed bars."""

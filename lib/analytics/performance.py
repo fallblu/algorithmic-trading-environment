@@ -201,6 +201,25 @@ def _trade_analysis(fills: list[Fill]) -> dict:
     }
 
 
+def compute_per_symbol_performance(fills: list[Fill], symbols: list[str]) -> dict[str, dict]:
+    """Compute trade statistics broken down by symbol.
+
+    Returns a dict keyed by symbol, each containing trade stats for that symbol.
+    """
+    from collections import defaultdict
+
+    fills_by_symbol: dict[str, list[Fill]] = defaultdict(list)
+    for fill in fills:
+        fills_by_symbol[fill.instrument.symbol].append(fill)
+
+    results = {}
+    for symbol in symbols:
+        sym_fills = fills_by_symbol.get(symbol, [])
+        results[symbol] = _trade_analysis(sym_fills)
+
+    return results
+
+
 def _empty_metrics() -> dict:
     return {
         "total_return": 0.0,

@@ -8,6 +8,8 @@ Live trading executes real orders on the Kraken exchange using the same strategy
 - Fills are determined by the exchange (real market conditions)
 - Account balances come from Kraken (no simulated broker)
 
+The system supports trading multiple symbols simultaneously.
+
 **Start with paper trading first.** Validate your strategy, parameters, and risk limits before going live.
 
 ## Prerequisites
@@ -58,10 +60,10 @@ print(f'Balances: {account.balances}')
 ## Quick Start
 
 ```bash
-# Start with a small quantity
+# Start with small quantities across multiple symbols
 persistra process start sma_crossover_live \
   -p mode=live \
-  -p symbol=BTC/USD \
+  -p symbols=BTC/USD,ETH/USD \
   -p timeframe=1m \
   -p quantity=0.0001 \
   -p max_position_size=0.001
@@ -79,7 +81,7 @@ persistra process stop sma_crossover_live-1
 ```bash
 persistra process start sma_crossover_live \
   -p mode=live \
-  -p symbol=BTC/USD \
+  -p symbols=BTC/USD,ETH/USD \
   -p timeframe=1m \
   -p fast_period=10 \
   -p slow_period=30 \
@@ -90,12 +92,12 @@ persistra process start sma_crossover_live \
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `mode` | `paper` | Must be `live` for real execution |
-| `symbol` | `BTC/USD` | Trading pair |
+| `symbols` | `BTC/USD` | Comma-separated trading pairs |
 | `timeframe` | `1m` | Bar period |
 | `fast_period` | `10` | Fast SMA window (bars) |
 | `slow_period` | `30` | Slow SMA window (bars) |
-| `quantity` | `0.01` | Trade size per signal (base asset) |
-| `max_position_size` | `1.0` | Risk limit: max position in base asset |
+| `quantity` | `0.01` | Trade size per signal per symbol (base asset) |
+| `max_position_size` | `1.0` | Risk limit: max position per instrument (base asset) |
 
 **Note:** `initial_cash`, `fee_rate`, and `slippage_pct` are ignored in live mode — the real exchange balance, fees, and fills apply.
 
@@ -104,7 +106,7 @@ persistra process start sma_crossover_live \
 | Parameter | Conservative | Description |
 |-----------|-------------|-------------|
 | `quantity` | `0.0001` | ~$7 per trade at $70k BTC |
-| `max_position_size` | `0.001` | ~$70 max exposure |
+| `max_position_size` | `0.001` | ~$70 max exposure per symbol |
 | `timeframe` | `1m` | Fast feedback loop |
 
 Scale up gradually once you confirm the system behaves correctly.
@@ -114,37 +116,46 @@ Scale up gradually once you confirm the system behaves correctly.
 ### Architecture
 
 ```
-Kraken WebSocket v2 (public, real-time bars)
+Kraken WebSocket v2 (public, real-time bars for all symbols)
         │
         ▼
-   LiveFeed (background thread)
+   LiveFeed (background thread, batch subscribe)
         │
         ▼
-   KrakenBroker (authenticated REST)
+   PricePanel (rolling MultiIndex DataFrame)
         │
-   ┌────┴────┐
-   ▼         ▼
-AddOrder   QueryOrders ← Kraken Exchange
-   │
-   ▼
-RiskManager (pre-trade checks)
+        ▼
+   Strategy.on_bar(panel) ──→ [Order per symbol]
+                                    │
+                                    ▼
+                             RiskManager (pre-trade checks per instrument)
+                                    │
+                                    ▼
+                             KrakenBroker (authenticated REST)
+                                    │
+                              ┌─────┴─────┐
+                              ▼           ▼
+                          AddOrder    QueryOrders ← Kraken Exchange
 ```
 
 ### Execution Flow (per tick, every 10 seconds)
 
-1. **Drain bar queue**: Read all completed bars from the WebSocket
-2. **Check open orders**: Query Kraken for status updates on pending orders
-3. **Call strategy**: `strategy.on_bar(bar)` generates buy/sell signals
-4. **Risk check**: Validate each order against position size limits
-5. **Submit to Kraken**: `POST /0/private/AddOrder` for approved orders
-6. **Persist state**: Write account state and last tick timestamp
+1. **Drain bar queue**: Read all completed bars from the WebSocket for all symbols
+2. **Group by timestamp**: Bars at the same timestamp form a group
+3. **For each group**:
+   - Check open orders: Query Kraken for status updates
+   - Append bars to PricePanel
+   - Call strategy: `strategy.on_bar(panel)` generates buy/sell signals for any symbol
+   - Risk check: Validate each order against per-instrument position limits
+   - Submit to Kraken: `POST /0/private/AddOrder` for approved orders
+4. **Persist state**: Write account state and last tick timestamp
 
 ### Order Submission
 
-When the strategy generates a market buy order:
+When the strategy generates a market buy order for a specific symbol:
 
 ```
-Strategy → Order(BUY, MARKET, 0.0001 BTC) → RiskManager.check() → KrakenBroker.submit_order()
+Strategy → Order(BUY, MARKET, 0.0001 BTC/USD) → RiskManager.check() → KrakenBroker.submit_order()
   → POST /0/private/AddOrder {pair: XBTUSD, type: buy, ordertype: market, volume: 0.0001}
   → Kraken returns txid: "OXXXX-XXXXX-XXXXXX"
   → order.metadata["kraken_txid"] = txid
@@ -167,6 +178,7 @@ Kraken spot trading has no native "position" concept. The KrakenBroker derives p
 
 - `get_position(BTC/USD)` → queries Kraken balance → checks `XXBT` key → returns Position if nonzero
 - This means any BTC in your account (from manual trades, deposits, etc.) appears as a position
+- Each symbol's position is tracked independently
 
 ## Monitoring
 
@@ -180,11 +192,13 @@ Expected log output:
 
 ```
 [INFO] data.live: WebSocket connected to wss://ws.kraken.com/v2
-[INFO] data.live: Subscribed to ohlc BTC/USD interval=1
-[INFO] execution.live: Warming up strategy with 48 historical bars
-[INFO] sma_crossover_live: LIVE trading initialized for BTC/USD 1m
-[INFO] strategy.sma_crossover: BUY signal at 2026-03-11 12:00:00: fast_sma=69500 > slow_sma=69480
+[INFO] data.live: Subscribed to ohlc ['BTC/USD', 'ETH/USD'] interval=1
+[INFO] execution.live: Warming up strategy with 42 bar groups across 2 symbols
+[INFO] sma_crossover_live: LIVE trading initialized for BTC/USD,ETH/USD 1m
+[INFO] strategy.sma_crossover: BUY BTC/USD at 2026-03-11 12:00:00: fast_sma=69500 > slow_sma=69480
 [INFO] execution.live: LIVE order submitted: BUY MARKET BTC/USD qty=0.0001
+[INFO] strategy.sma_crossover: BUY ETH/USD at 2026-03-11 12:00:00: fast_sma=3800 > slow_sma=3790
+[INFO] execution.live: LIVE order submitted: BUY MARKET ETH/USD qty=0.0001
 ```
 
 ### State Queries
@@ -211,7 +225,7 @@ Always cross-check with the Kraken web interface or app. The system logs Kraken 
 Every order passes through the `RiskManager` before submission:
 
 1. **Kill switch**: If active, all orders are rejected
-2. **Max position size**: If the resulting position would exceed `max_position_size`, the order is rejected
+2. **Max position size**: If the resulting position for that instrument would exceed `max_position_size`, the order is rejected
 3. **Max order value**: If the order notional exceeds $100,000, the order is rejected
 
 ### Risk Monitor Daemon
@@ -263,7 +277,7 @@ This stops the daemon and closes the WebSocket connection. It does **not** cance
 | Order execution | SimulatedBroker | Kraken REST API |
 | Fills | Simulated (bar open ± slippage) | Real exchange fills |
 | Fees | Configurable (default 0.26%) | Kraken's actual fee schedule |
-| Position tracking | Internal state | Derived from Kraken balance |
+| Position tracking | Internal state per symbol | Derived from Kraken balance per symbol |
 | Account balance | Simulated ($10,000 default) | Real Kraken balance |
 | API keys needed | No | Yes |
 | Risk of loss | None | Real |
@@ -272,11 +286,11 @@ This stops the daemon and closes the WebSocket connection. It does **not** cance
 
 Kraken has rate limits on private API endpoints. The system makes REST calls when:
 
-- Submitting orders (~1 call per signal)
+- Submitting orders (~1 call per signal per symbol)
 - Checking order status (~1 call per open order per tick)
 - The RiskManager calls `get_position()` for pre-trade checks (~1 call per order)
 
-At the 10-second daemon interval with the SMA crossover strategy (infrequent signals), this is well within Kraken's limits. If you add more frequent strategies, monitor for `429` errors in logs.
+At the 10-second daemon interval with the SMA crossover strategy (infrequent signals), this is well within Kraken's limits even with multiple symbols. If you add more frequent strategies or many symbols, monitor for `429` errors in logs.
 
 ## Stopping
 
@@ -304,7 +318,7 @@ After stopping:
 
 **"Kraken API error: ['EGeneral:Invalid arguments:volume']"** — Order quantity below Kraken's minimum. BTC/USD minimum is 0.0001 BTC.
 
-**"Order rejected by risk manager"** — Position would exceed `max_position_size`. Increase the limit or wait for the current position to close.
+**"Order rejected by risk manager"** — Position for that instrument would exceed `max_position_size`. Increase the limit or wait for the current position to close.
 
 **"Failed to submit order to Kraken"** — Network error or Kraken outage. The error is logged and the daemon continues on the next tick. No partial state is left.
 
@@ -312,13 +326,13 @@ After stopping:
 
 ## Checklist Before Going Live
 
-- [ ] Paper traded the same strategy/parameters for at least several days
-- [ ] Reviewed paper trading logs — signals and fills make sense
+- [ ] Paper traded the same strategy/parameters/symbols for at least several days
+- [ ] Reviewed paper trading logs — signals and fills make sense for all symbols
 - [ ] Kraken account funded
 - [ ] API key created with correct permissions (no withdrawal permission)
 - [ ] API credentials in environment variables
 - [ ] `KrakenBroker().get_account()` returns correct balance
 - [ ] Starting with minimal `quantity` (e.g., 0.0001 BTC)
-- [ ] `max_position_size` set conservatively
+- [ ] `max_position_size` set conservatively per instrument
 - [ ] Risk monitor running
 - [ ] Kill switch state is `false`: `persistra state get risk.kill_switch`

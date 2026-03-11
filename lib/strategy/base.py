@@ -2,8 +2,9 @@
 
 from abc import ABC, abstractmethod
 
+import pandas as pd
+
 from execution.context import ExecutionContext
-from models.bar import Bar
 from models.fill import Fill
 from models.order import Order
 
@@ -20,8 +21,27 @@ class Strategy(ABC):
         self.params = params or {}
 
     @abstractmethod
-    def on_bar(self, bar: Bar) -> list[Order]:
-        """Called on each new bar. Return a list of orders to submit."""
+    def on_bar(self, panel: pd.DataFrame) -> list[Order]:
+        """Called on each new bar group.
+
+        Args:
+            panel: MultiIndex DataFrame with (timestamp, symbol) index and
+                   columns [open, high, low, close, volume, trades, vwap].
+                   Contains the last `lookback()` bars for all symbols.
+
+        Returns:
+            List of orders to submit.
+        """
+        ...
+
+    @abstractmethod
+    def universe(self) -> list[str]:
+        """Return the list of symbols this strategy trades."""
+        ...
+
+    @abstractmethod
+    def lookback(self) -> int:
+        """Number of bars of history needed for indicator computation."""
         ...
 
     def on_fill(self, fill: Fill) -> None:

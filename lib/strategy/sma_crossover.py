@@ -1,9 +1,10 @@
-"""SMA Crossover strategy — extracted for reuse by backtest and live processes."""
+"""SMA Crossover strategy — multi-ticker DataFrame-based implementation."""
 
 import logging
 from decimal import Decimal
 
-from models.bar import Bar
+import pandas as pd
+
 from models.order import Order, OrderSide, OrderType
 from strategy.base import Strategy
 
@@ -15,7 +16,7 @@ class SmaCrossover(Strategy):
 
     Goes long when fast SMA crosses above slow SMA.
     Exits (sells) when fast SMA crosses below slow SMA.
-    Long-only for the thin-slice.
+    Long-only. Supports multiple symbols simultaneously.
     """
 
     def __init__(self, ctx, params=None):
@@ -23,55 +24,66 @@ class SmaCrossover(Strategy):
         self.fast_period = int(self.params.get("fast_period", 10))
         self.slow_period = int(self.params.get("slow_period", 30))
         self.quantity = Decimal(str(self.params.get("quantity", "0.01")))
-        self._closes: list[Decimal] = []
-        self._prev_fast_above: bool | None = None
+        self._prev_fast_above: dict[str, bool | None] = {}
 
-    def on_bar(self, bar: Bar) -> list[Order]:
-        self._closes.append(bar.close)
+    def universe(self) -> list[str]:
+        return self.params.get("symbols", ["BTC/USD"])
 
-        if len(self._closes) < self.slow_period:
+    def lookback(self) -> int:
+        return self.slow_period
+
+    def on_bar(self, panel: pd.DataFrame) -> list[Order]:
+        if panel.empty:
             return []
 
-        fast_sma = self._sma(self.fast_period)
-        slow_sma = self._sma(self.slow_period)
-        fast_above = fast_sma > slow_sma
-
         orders: list[Order] = []
+        symbols = panel.index.get_level_values("symbol").unique()
 
-        if self._prev_fast_above is not None and fast_above != self._prev_fast_above:
-            broker = self.ctx.get_broker()
-            instrument = self.params.get("_instrument")
-            position = broker.get_position(instrument)
+        for symbol in symbols:
+            sym_data = panel.xs(symbol, level="symbol")
 
-            if fast_above and (position is None or position.quantity == 0):
-                orders.append(Order(
-                    instrument=instrument,
-                    side=OrderSide.BUY,
-                    type=OrderType.MARKET,
-                    quantity=self.quantity,
-                    strategy_id="sma_crossover",
-                ))
-                log.info(
-                    "BUY signal at %s: fast_sma=%.2f > slow_sma=%.2f, price=%s",
-                    bar.timestamp, fast_sma, slow_sma, bar.close,
-                )
+            if len(sym_data) < self.slow_period:
+                continue
 
-            elif not fast_above and position is not None and position.quantity > 0:
-                orders.append(Order(
-                    instrument=instrument,
-                    side=OrderSide.SELL,
-                    type=OrderType.MARKET,
-                    quantity=position.quantity,
-                    strategy_id="sma_crossover",
-                ))
-                log.info(
-                    "SELL signal at %s: fast_sma=%.2f < slow_sma=%.2f, price=%s",
-                    bar.timestamp, fast_sma, slow_sma, bar.close,
-                )
+            closes = sym_data["close"].values
+            fast_sma = float(closes[-self.fast_period:].mean())
+            slow_sma = float(closes[-self.slow_period:].mean())
+            fast_above = fast_sma > slow_sma
 
-        self._prev_fast_above = fast_above
+            prev = self._prev_fast_above.get(symbol)
+
+            if prev is not None and fast_above != prev:
+                broker = self.ctx.get_broker()
+                univ = self.ctx.get_universe()
+                instrument = univ.instruments[symbol]
+                position = broker.get_position(instrument)
+
+                if fast_above and (position is None or position.quantity == 0):
+                    orders.append(Order(
+                        instrument=instrument,
+                        side=OrderSide.BUY,
+                        type=OrderType.MARKET,
+                        quantity=self.quantity,
+                        strategy_id="sma_crossover",
+                    ))
+                    log.info(
+                        "BUY %s at %s: fast_sma=%.2f > slow_sma=%.2f, price=%.2f",
+                        symbol, sym_data.index[-1], fast_sma, slow_sma, closes[-1],
+                    )
+
+                elif not fast_above and position is not None and position.quantity > 0:
+                    orders.append(Order(
+                        instrument=instrument,
+                        side=OrderSide.SELL,
+                        type=OrderType.MARKET,
+                        quantity=position.quantity,
+                        strategy_id="sma_crossover",
+                    ))
+                    log.info(
+                        "SELL %s at %s: fast_sma=%.2f < slow_sma=%.2f, price=%.2f",
+                        symbol, sym_data.index[-1], fast_sma, slow_sma, closes[-1],
+                    )
+
+            self._prev_fast_above[symbol] = fast_above
+
         return orders
-
-    def _sma(self, period: int) -> float:
-        window = self._closes[-period:]
-        return float(sum(window)) / len(window)

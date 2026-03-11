@@ -1,4 +1,4 @@
-"""BacktestContext — bar-by-bar replay engine with simulated broker."""
+"""BacktestContext — multi-symbol bar-by-bar replay engine with simulated broker."""
 
 import logging
 from datetime import datetime, timezone
@@ -7,12 +7,11 @@ from pathlib import Path
 
 from broker.base import Broker
 from broker.simulated import SimulatedBroker
-from data.feed import DataFeed
 from data.historical import HistoricalFeed
+from data.price_panel import PricePanel
 from data.store import MarketDataStore
+from data.universe import Universe
 from execution.context import ExecutionContext
-from models.bar import Bar
-from models.instrument import Instrument
 from risk.manager import RiskManager
 from strategy.base import Strategy
 
@@ -20,18 +19,18 @@ log = logging.getLogger(__name__)
 
 
 class BacktestContext(ExecutionContext):
-    """Drives bar-by-bar replay for backtesting.
+    """Drives multi-symbol bar-by-bar replay for backtesting.
 
-    Owns the replay loop: loads bars from HistoricalFeed, processes them
-    through the SimulatedBroker, then calls strategy.on_bar().
+    Owns the replay loop: loads bars for all symbols from HistoricalFeed,
+    groups them by timestamp, processes through SimulatedBroker, then
+    calls strategy.on_bar() with a PricePanel window.
     """
 
     mode = "backtest"
 
     def __init__(
         self,
-        instrument: Instrument,
-        timeframe: str = "1h",
+        universe: Universe,
         start: datetime | None = None,
         end: datetime | None = None,
         initial_cash: Decimal = Decimal("10000"),
@@ -40,8 +39,7 @@ class BacktestContext(ExecutionContext):
         max_position_size: Decimal = Decimal("1.0"),
         data_dir: Path | None = None,
     ):
-        self.instrument = instrument
-        self.timeframe = timeframe
+        self._universe = universe
         self.start = start
         self.end = end
 
@@ -49,7 +47,7 @@ class BacktestContext(ExecutionContext):
             data_dir = Path(".persistra/market_data")
 
         self._store = MarketDataStore(data_dir)
-        self._feed = HistoricalFeed(self._store, exchange=instrument.exchange)
+        self._feed = HistoricalFeed(self._store, exchange="kraken")
         self._broker = SimulatedBroker(
             initial_cash=initial_cash,
             fee_rate=fee_rate,
@@ -60,8 +58,8 @@ class BacktestContext(ExecutionContext):
         self._equity_curve: list[tuple[datetime, Decimal]] = []
         self._bars_processed: int = 0
 
-    def get_feed(self, instrument: Instrument) -> DataFeed:
-        return self._feed
+    def get_universe(self) -> Universe:
+        return self._universe
 
     def get_broker(self) -> Broker:
         return self._broker
@@ -81,54 +79,62 @@ class BacktestContext(ExecutionContext):
         return self._broker.fills
 
     def run(self, strategy: Strategy) -> dict:
-        """Execute the backtest replay loop.
+        """Execute the multi-symbol backtest replay loop."""
+        panel = PricePanel(self._universe, lookback=strategy.lookback())
 
-        Returns a results dict with equity curve, fills, and summary stats.
-        """
-        bars = self._feed.historical_bars(
-            self.instrument, self.timeframe, self.start, self.end,
-        )
+        # Load bars for all symbols
+        self._feed.load_universe(self._universe, self.start, self.end)
 
-        if not bars:
-            log.warning("No bars found for %s %s", self.instrument.symbol, self.timeframe)
+        if self._feed.total_groups == 0:
+            log.warning("No bars found for universe %s", self._universe.symbols)
             return {"equity_curve": [], "fills": [], "bars_processed": 0}
 
         log.info(
-            "Starting backtest: %s %s, %d bars from %s to %s",
-            self.instrument.symbol,
-            self.timeframe,
-            len(bars),
-            bars[0].timestamp,
-            bars[-1].timestamp,
+            "Starting backtest: %s %s, %d timestamp groups",
+            self._universe.symbols,
+            self._universe.timeframe,
+            self._feed.total_groups,
         )
 
         # Record initial equity
         initial_equity = self._broker.get_account().equity
-        self._equity_curve.append((bars[0].timestamp, initial_equity))
+        first_group = True
 
-        for bar in bars:
-            self._current_time = bar.timestamp
+        while True:
+            bar_group = self._feed.next_bar_group()
+            if bar_group is None:
+                break
 
-            # 1. Process pending orders against this bar
-            self._broker.process_bar(bar)
+            self._current_time = bar_group[0].timestamp
 
-            # 2. Call strategy
-            orders = strategy.on_bar(bar)
+            if first_group:
+                self._equity_curve.append((self._current_time, initial_equity))
+                first_group = False
 
-            # 3. Risk check + submit orders
-            for order in orders:
-                if self._risk_manager.check(order, self._broker):
-                    self._broker.submit_order(order)
-                else:
-                    log.info("Order rejected by risk manager: %s", order.id)
+            # 1. Process pending orders against all bars at this timestamp
+            self._broker.process_bars(bar_group)
 
-            # 4. Record equity snapshot
+            # 2. Append bars to panel
+            panel.append_bars(bar_group)
+
+            # 3. Call strategy if panel is ready
+            if panel.is_ready:
+                orders = strategy.on_bar(panel.get_window())
+
+                # 4. Risk check + submit orders
+                for order in orders:
+                    if self._risk_manager.check(order, self._broker):
+                        self._broker.submit_order(order)
+                    else:
+                        log.info("Order rejected by risk manager: %s", order.id)
+
+            # 5. Record equity snapshot
             account = self._broker.get_account()
-            self._equity_curve.append((bar.timestamp, account.equity))
+            self._equity_curve.append((self._current_time, account.equity))
             self._bars_processed += 1
 
         log.info(
-            "Backtest complete: %d bars, %d fills, final equity: %s",
+            "Backtest complete: %d groups, %d fills, final equity: %s",
             self._bars_processed,
             len(self._broker.fills),
             self._broker.get_account().equity,

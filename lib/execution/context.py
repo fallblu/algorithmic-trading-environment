@@ -4,8 +4,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 
 from broker.base import Broker
-from data.feed import DataFeed
-from models.instrument import Instrument
+from data.universe import Universe
 from risk.manager import RiskManager
 
 
@@ -19,8 +18,8 @@ class ExecutionContext(ABC):
     mode: str  # "backtest" | "paper" | "live"
 
     @abstractmethod
-    def get_feed(self, instrument: Instrument) -> DataFeed:
-        """Get the data feed for an instrument."""
+    def get_universe(self) -> Universe:
+        """Get the universe of instruments being traded."""
         ...
 
     @abstractmethod

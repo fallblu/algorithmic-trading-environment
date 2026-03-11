@@ -5,8 +5,8 @@ On first tick: creates context, subscribes, warms up indicators.
 On subsequent ticks: calls ctx.run_once() and persists state.
 
 Usage:
-    persistra process start sma_crossover_live -p mode=paper -p symbol=BTC/USD -p timeframe=1m
-    persistra process start sma_crossover_live -p mode=live -p symbol=BTC/USD -p timeframe=1m
+    persistra process start sma_crossover_live -p mode=paper -p symbols=BTC/USD,ETH/USD -p timeframe=1m
+    persistra process start sma_crossover_live -p mode=live -p symbols=BTC/USD,ETH/USD -p timeframe=1m
 """
 
 import atexit
@@ -28,7 +28,7 @@ _initialized = False
 def run(
     env,
     mode: str = "paper",
-    symbol: str = "BTC/USD",
+    symbols: str = "BTC/USD",
     timeframe: str = "1m",
     fast_period: int = 10,
     slow_period: int = 30,
@@ -41,31 +41,24 @@ def run(
     """Run the SMA crossover strategy in paper or live mode."""
     global _ctx, _strategy, _initialized
 
-    from models.instrument import Instrument
+    from data.universe import Universe
     from strategy.sma_crossover import SmaCrossover
 
-    instrument = Instrument(
-        symbol=symbol,
-        base=symbol.split("/")[0],
-        quote=symbol.split("/")[1],
-        exchange="kraken",
-        asset_class="crypto",
-        tick_size=Decimal("0.01"),
-        lot_size=Decimal("0.00001"),
-        min_notional=Decimal("5"),
-    )
+    symbol_list = [s.strip() for s in symbols.split(",")]
+    universe = Universe.from_symbols(symbol_list, timeframe)
 
     strategy_params = {
         "fast_period": fast_period,
         "slow_period": slow_period,
         "quantity": quantity,
-        "_instrument": instrument,
+        "symbols": symbol_list,
     }
 
     if not _initialized:
         if mode == "paper":
             from execution.paper import PaperContext
             _ctx = PaperContext(
+                universe=universe,
                 initial_cash=Decimal(initial_cash),
                 fee_rate=Decimal(fee_rate),
                 slippage_pct=Decimal(slippage_pct),
@@ -74,6 +67,7 @@ def run(
         elif mode == "live":
             from execution.live import LiveContext
             _ctx = LiveContext(
+                universe=universe,
                 max_position_size=Decimal(max_position_size),
             )
         else:
@@ -81,16 +75,15 @@ def run(
 
         _strategy = SmaCrossover(_ctx, strategy_params)
 
-        _ctx.subscribe(instrument, timeframe)
-        _ctx.warmup(_strategy, instrument, timeframe,
-                     warmup_bars=slow_period + 10)
+        _ctx.subscribe_all(timeframe)
+        _ctx.warmup(_strategy, timeframe, warmup_bars=slow_period + 10)
 
         atexit.register(_ctx.shutdown)
         _initialized = True
-        log.info("%s trading initialized for %s %s", mode.upper(), symbol, timeframe)
+        log.info("%s trading initialized for %s %s", mode.upper(), symbols, timeframe)
 
     try:
-        result = _ctx.run_once(_strategy, instrument)
+        result = _ctx.run_once(_strategy)
 
         ns = env.state.ns(mode)
         ns.set("last_tick", datetime.now(timezone.utc).isoformat())

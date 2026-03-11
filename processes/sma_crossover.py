@@ -16,7 +16,7 @@ log = logging.getLogger(__name__)
 @process("job")
 def run(
     env,
-    symbol: str = "BTC/USD",
+    symbols: str = "BTC/USD",
     timeframe: str = "1h",
     fast_period: int = 10,
     slow_period: int = 30,
@@ -29,21 +29,16 @@ def run(
     end: str = "",
 ):
     """Run the SMA crossover strategy in backtest mode."""
+    import pandas as pd
+
     from analytics.performance import compute_performance
+    from data.state_parquet import ParquetStateStore
+    from data.universe import Universe
     from execution.backtest import BacktestContext
-    from models.instrument import Instrument
     from strategy.sma_crossover import SmaCrossover
 
-    instrument = Instrument(
-        symbol=symbol,
-        base=symbol.split("/")[0],
-        quote=symbol.split("/")[1],
-        exchange="kraken",
-        asset_class="crypto",
-        tick_size=Decimal("0.01"),
-        lot_size=Decimal("0.00001"),
-        min_notional=Decimal("5"),
-    )
+    symbol_list = [s.strip() for s in symbols.split(",")]
+    universe = Universe.from_symbols(symbol_list, timeframe)
 
     start_dt = datetime.fromisoformat(start) if start else datetime(2024, 1, 1, tzinfo=timezone.utc)
     end_dt = datetime.fromisoformat(end) if end else datetime.now(timezone.utc)
@@ -52,12 +47,11 @@ def run(
         "fast_period": fast_period,
         "slow_period": slow_period,
         "quantity": quantity,
-        "_instrument": instrument,
+        "symbols": symbol_list,
     }
 
     ctx = BacktestContext(
-        instrument=instrument,
-        timeframe=timeframe,
+        universe=universe,
         start=start_dt,
         end=end_dt,
         initial_cash=Decimal(initial_cash),
@@ -75,24 +69,53 @@ def run(
         fills=results["fills"],
     )
 
+    # Save equity curve and fills as Parquet
+    pq_store = ParquetStateStore(Path(env.path) / ".persistra")
+
+    if results["equity_curve"]:
+        eq_df = pd.DataFrame(
+            [(ts, float(eq)) for ts, eq in results["equity_curve"]],
+            columns=["timestamp", "equity"],
+        )
+        eq_path = pq_store.save("backtest_equity_curve", eq_df)
+    else:
+        eq_path = ""
+
+    if results["fills"]:
+        fills_data = []
+        for f in results["fills"]:
+            fills_data.append({
+                "timestamp": f.timestamp,
+                "symbol": f.instrument.symbol,
+                "side": f.side.value,
+                "quantity": float(f.quantity),
+                "price": float(f.price),
+                "fee": float(f.fee),
+                "order_id": f.order_id,
+            })
+        fills_df = pd.DataFrame(fills_data)
+        fills_path = pq_store.save("backtest_fills", fills_df)
+    else:
+        fills_path = ""
+
     ns = env.state.ns("backtest")
     ns.set("results", metrics)
-    ns.set("equity_curve", [
-        {"timestamp": ts.isoformat(), "equity": str(eq)}
-        for ts, eq in results["equity_curve"]
-    ])
+    ns.set("equity_curve_path", eq_path)
+    ns.set("fills_path", fills_path)
+    ns.set("universe", symbols)
 
     strat_ns = env.state.ns("strategy.sma_crossover")
     strat_ns.set("params", {
         "fast_period": fast_period,
         "slow_period": slow_period,
         "quantity": quantity,
-        "symbol": symbol,
+        "symbols": symbols,
         "timeframe": timeframe,
     })
     strat_ns.set("metrics", metrics)
 
     log.info("=== Backtest Results ===")
+    log.info("Universe: %s", symbols)
     log.info("Total Return: %.2f%%", metrics["total_return"] * 100)
     log.info("Sharpe Ratio: %.4f", metrics["sharpe_ratio"])
     log.info("Max Drawdown: %.2f%%", metrics["max_drawdown"] * 100)

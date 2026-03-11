@@ -26,3 +26,18 @@ class DataFeed(ABC):
     ) -> list[Bar]:
         """Get historical bars for the given instrument and timeframe."""
         ...
+
+    def subscribe_all(self, instruments: list[Instrument], timeframe: str) -> None:
+        """Subscribe to multiple instruments. Default: calls subscribe() in loop."""
+        for instrument in instruments:
+            self.subscribe(instrument, timeframe)
+
+    def next_bars(self) -> list[Bar]:
+        """Drain all available bars. Default: calls next_bar() in loop."""
+        bars: list[Bar] = []
+        while True:
+            bar = self.next_bar()
+            if bar is None:
+                break
+            bars.append(bar)
+        return bars

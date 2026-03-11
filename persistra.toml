@@ -24,3 +24,6 @@ max_drawdown = { type = "float", default = 0.0 }
 
 # Execution mode
 execution_mode = { type = "str", default = "backtest" }
+
+# Backtest universe
+backtest_symbols = { type = "str", default = "BTC/USD" }

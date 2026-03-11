@@ -2,15 +2,15 @@
 
 ## Overview
 
-Paper trading uses real-time market data from the Kraken WebSocket feed but executes orders through a simulated broker. This lets you validate strategy behavior against live market conditions without risking real money. No API keys are required — the WebSocket feed is public.
+Paper trading uses real-time market data from the Kraken WebSocket feed but executes orders through a simulated broker. This lets you validate strategy behavior against live market conditions without risking real money. No API keys are required — the WebSocket feed is public. The system supports trading multiple symbols simultaneously.
 
 ## Quick Start
 
 ```bash
-# Start paper trading BTC/USD with 1-minute bars
+# Start paper trading BTC/USD and ETH/USD with 1-minute bars
 persistra process start sma_crossover_live \
   -p mode=paper \
-  -p symbol=BTC/USD \
+  -p symbols=BTC/USD,ETH/USD \
   -p timeframe=1m
 
 # Monitor
@@ -29,16 +29,19 @@ persistra process stop sma_crossover_live-1
 Kraken WebSocket v2 (wss://ws.kraken.com/v2)
         │
         ▼
-   LiveFeed (background thread)
+   LiveFeed (background thread, batch subscribe)
         │ completed bars via thread-safe queue
         ▼
-   SimulatedBroker ←→ Strategy (SmaCrossover)
-        │                    │
-        ▼                    ▼
-   Fill simulation      Order generation
+   PricePanel (rolling MultiIndex DataFrame)
         │
         ▼
-   Persistra State (equity, fills, positions)
+   Strategy.on_bar(panel) ←→ SimulatedBroker
+        │                         │
+        ▼                         ▼
+   Order generation          Fill simulation
+                                  │
+                                  ▼
+                          Persistra State (equity, fills, positions)
 ```
 
 ### Daemon Lifecycle
@@ -46,14 +49,16 @@ Kraken WebSocket v2 (wss://ws.kraken.com/v2)
 The `sma_crossover_live` process runs as a daemon with a **10-second polling interval**:
 
 1. **First tick** (initialization):
-   - Creates the PaperContext (LiveFeed + SimulatedBroker)
-   - Connects to Kraken WebSocket and subscribes to OHLC bars
-   - Fetches historical bars via REST API to warm up the strategy's SMA indicators
+   - Builds a `Universe` from the comma-separated `symbols` parameter
+   - Creates PaperContext (LiveFeed + SimulatedBroker + PricePanel)
+   - Connects to Kraken WebSocket and batch-subscribes to OHLC bars for all symbols
+   - Fetches historical bars via REST API for all symbols to warm up the strategy's SMA indicators
    - Module-level state persists between ticks
 
 2. **Subsequent ticks** (every 10 seconds):
-   - Drains completed bars from the WebSocket queue
-   - For each bar: fills pending orders → calls strategy → risk checks → submits new orders
+   - Drains all completed bars from the WebSocket queue
+   - Groups bars by timestamp
+   - For each timestamp group: fills pending orders → appends to PricePanel → calls strategy with panel → risk checks → submits new orders
    - Persists equity and trade state
 
 3. **Shutdown** (on `persistra process stop`):
@@ -67,12 +72,14 @@ The WebSocket streams in-progress candle updates every few seconds. A bar is onl
 - For **1m bars**: A completed bar arrives within seconds of the minute boundary. The 10-second daemon interval picks it up promptly.
 - For **1h bars**: Same mechanism, but you wait up to ~60 minutes for each signal. The daemon still polls every 10 seconds.
 
+With multiple symbols, bars complete independently — the PricePanel's inner-join ensures the strategy only sees timestamps where all symbols have data.
+
 ## Parameters
 
 ```bash
 persistra process start sma_crossover_live \
   -p mode=paper \
-  -p symbol=BTC/USD \
+  -p symbols=BTC/USD,ETH/USD \
   -p timeframe=1m \
   -p fast_period=10 \
   -p slow_period=30 \
@@ -86,15 +93,15 @@ persistra process start sma_crossover_live \
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `mode` | `paper` | Must be `paper` for simulated execution |
-| `symbol` | `BTC/USD` | Trading pair |
+| `symbols` | `BTC/USD` | Comma-separated trading pairs |
 | `timeframe` | `1m` | Bar period (1m, 5m, 15m, 30m, 1h, 4h, 1d) |
 | `fast_period` | `10` | Fast SMA window (bars) |
 | `slow_period` | `30` | Slow SMA window (bars) |
-| `quantity` | `0.01` | Trade size per signal (base asset) |
+| `quantity` | `0.01` | Trade size per signal per symbol (base asset) |
 | `initial_cash` | `10000` | Starting simulated USD balance |
 | `fee_rate` | `0.0026` | Simulated taker fee (0.26%) |
 | `slippage_pct` | `0.0001` | Simulated slippage (0.01%) |
-| `max_position_size` | `1.0` | Risk limit: max position in base asset |
+| `max_position_size` | `1.0` | Risk limit: max position per instrument (base asset) |
 
 ### Timeframe Considerations
 
@@ -136,12 +143,13 @@ persistra state get strategy.sma_crossover.equity
 persistra process logs sma_crossover_live-1
 
 # Example log output:
-# 2026-03-11 10:40:25 [INFO] execution.paper: Warming up strategy with 48 historical bars
-# 2026-03-11 10:40:25 [INFO] sma_crossover_live: PAPER trading initialized for BTC/USD 1m
+# 2026-03-11 10:40:25 [INFO] execution.paper: Warming up strategy with 42 bar groups across 2 symbols
+# 2026-03-11 10:40:25 [INFO] sma_crossover_live: PAPER trading initialized for BTC/USD,ETH/USD 1m
 # 2026-03-11 10:41:05 [INFO] sma_crossover_live: Tick: 1 bars, 0 fills, equity=10000
-# 2026-03-11 10:42:15 [INFO] strategy.sma_crossover: BUY signal at ...: fast_sma=69500 > slow_sma=69480
+# 2026-03-11 10:42:15 [INFO] strategy.sma_crossover: BUY BTC/USD at ...: fast_sma=69500 > slow_sma=69480
 # 2026-03-11 10:42:15 [INFO] execution.paper: Order submitted: BUY MARKET BTC/USD qty=0.01
 # 2026-03-11 10:43:05 [INFO] execution.paper: Fill: BUY 0.01 BTC/USD @ 69520.5
+# 2026-03-11 10:45:30 [INFO] strategy.sma_crossover: BUY ETH/USD at ...: fast_sma=3800 > slow_sma=3790
 ```
 
 ### Check Process Status
@@ -152,9 +160,10 @@ persistra process status
 
 ## Warmup
 
-On first tick, the strategy is warmed up with `slow_period + 10` historical bars fetched via the Kraken REST API. During warmup:
+On first tick, the strategy is warmed up with `slow_period + 10` historical bars for ALL symbols, fetched via the Kraken REST API. During warmup:
 
-- Bars are passed through `strategy.on_bar()` to populate the SMA windows
+- Bars are grouped by timestamp and appended to the PricePanel
+- `strategy.on_bar(panel)` is called to populate the SMA windows for all symbols
 - Orders generated during warmup are **discarded** (not submitted to the broker)
 - After warmup, the strategy has enough history to generate valid signals immediately when live bars arrive
 
@@ -164,10 +173,10 @@ Paper trading uses the same `SimulatedBroker` as backtesting:
 
 - **Market orders** fill at the bar's open price ± slippage
 - **Fees** are deducted from the simulated USD balance
-- **Position tracking** uses volume-weighted average entry price
-- **Equity** = cash + unrealized P&L of open positions
+- **Position tracking** uses volume-weighted average entry price, tracked per symbol
+- **Equity** = cash + unrealized P&L of all open positions
 
-The key difference from backtesting: bars arrive one at a time from the live WebSocket feed instead of being replayed from disk. The strategy sees real market movements as they happen.
+Multi-symbol bar groups are processed atomically — all pending orders for all symbols are filled, then equity is updated once via `update_equity_all()`.
 
 ## Running Alongside Risk Monitor
 
@@ -198,9 +207,10 @@ persistra process stop sma_crossover_live-1
 # Restart with same parameters
 persistra process restart sma_crossover_live-1
 
-# Start fresh with different parameters
+# Start fresh with different parameters or symbols
 persistra process start sma_crossover_live \
   -p mode=paper \
+  -p symbols=BTC/USD,ETH/USD,SOL/USD \
   -p fast_period=5 \
   -p slow_period=20
 ```
@@ -213,14 +223,14 @@ Once you're satisfied with paper trading results:
 
 1. Fund your Kraken account
 2. Set API credentials (see the [Live Trading Guide](live-trading.md))
-3. Change `mode=paper` to `mode=live` — the strategy, parameters, and data feed are identical
+3. Change `mode=paper` to `mode=live` — the strategy, parameters, symbols, and data feed are identical
 
 ```bash
 # Paper
-persistra process start sma_crossover_live -p mode=paper -p symbol=BTC/USD -p timeframe=1m
+persistra process start sma_crossover_live -p mode=paper -p symbols=BTC/USD,ETH/USD -p timeframe=1m
 
 # Live (same strategy, real execution)
-persistra process start sma_crossover_live -p mode=live -p symbol=BTC/USD -p timeframe=1m -p quantity=0.0001
+persistra process start sma_crossover_live -p mode=live -p symbols=BTC/USD,ETH/USD -p timeframe=1m -p quantity=0.0001
 ```
 
 ## Troubleshooting
@@ -229,7 +239,7 @@ persistra process start sma_crossover_live -p mode=live -p symbol=BTC/USD -p tim
 
 **No bars processed** — The daemon may be polling between bar boundaries. Wait at least one full bar period (e.g., 60 seconds for 1m bars).
 
-**"Order rejected by risk manager"** — The order would exceed `max_position_size`. Either increase the limit or reduce `quantity`.
+**"Order rejected by risk manager"** — The order would exceed `max_position_size` for that instrument. Either increase the limit or reduce `quantity`.
 
 **Process shows "failed"** — Check logs for the full traceback:
 
