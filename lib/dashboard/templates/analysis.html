@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% set active_page = "analysis" %}
+
+{% block title %}Analysis - Trader Dashboard{% endblock %}
+{% block page_title %}Analysis{% endblock %}
+
+{% block content %}
+{% if results %}
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>ID</th>
+            <th>Symbol</th>
+            <th>Type</th>
+            <th>Timestamp</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for r in results %}
+        <tr>
+            <td><code>{{ r.get('id', '')[:12] }}</code></td>
+            <td>{{ r.get('symbol', 'N/A') }}</td>
+            <td>{{ r.get('analysis_type', 'N/A') }}</td>
+            <td>{{ r.get('timestamp', 'N/A') }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<div class="empty-state">
+    <p>No analysis results found. Run an analysis workflow to generate results.</p>
+</div>
+{% endif %}
+{% endblock %}

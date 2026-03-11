@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Trader Dashboard{% endblock %}</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+    {% block head %}{% endblock %}
+</head>
+<body>
+    <nav class="sidebar">
+        <div class="sidebar-header">
+            <h2>Trader</h2>
+        </div>
+        <ul class="nav-links">
+            <li><a href="/" class="{% if active_page == 'overview' %}active{% endif %}">Overview</a></li>
+            <li><a href="/backtests" class="{% if active_page == 'backtests' %}active{% endif %}">Backtests</a></li>
+            <li><a href="/batch" class="{% if active_page == 'batch' %}active{% endif %}">Batch Runs</a></li>
+            <li><a href="/portfolio" class="{% if active_page == 'portfolio' %}active{% endif %}">Portfolio</a></li>
+            <li><a href="/data" class="{% if active_page == 'market_data' %}active{% endif %}">Market Data</a></li>
+            <li><a href="/signals" class="{% if active_page == 'signals' %}active{% endif %}">Signals</a></li>
+            <li><a href="/stress" class="{% if active_page == 'stress_test' %}active{% endif %}">Stress Tests</a></li>
+            <li><a href="/analysis" class="{% if active_page == 'analysis' %}active{% endif %}">Analysis</a></li>
+        </ul>
+    </nav>
+    <main class="content">
+        <header class="content-header">
+            <h1>{% block page_title %}Dashboard{% endblock %}</h1>
+        </header>
+        <div class="content-body">
+            {% block content %}{% endblock %}
+        </div>
+    </main>
+</body>
+</html>

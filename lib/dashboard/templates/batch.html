@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% set active_page = "batch" %}
+
+{% block title %}Batch Runs - Trader Dashboard{% endblock %}
+{% block page_title %}Batch Runs{% endblock %}
+
+{% block content %}
+{% if results %}
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>ID</th>
+            <th>Strategy</th>
+            <th>Combinations</th>
+            <th>Timestamp</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for r in results %}
+        <tr>
+            <td><code>{{ r.get('id', '')[:12] }}</code></td>
+            <td>{{ r.get('strategy', 'N/A') }}</td>
+            <td>{{ r.get('combinations', 'N/A') }}</td>
+            <td>{{ r.get('timestamp', 'N/A') }}</td>
+            <td><a href="/batch/{{ r.get('id', '') }}" class="btn btn-sm">View</a></td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<div class="empty-state">
+    <p>No batch run results found.</p>
+</div>
+{% endif %}
+{% endblock %}

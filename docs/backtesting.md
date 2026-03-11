@@ -263,6 +263,46 @@ persistra process run sma_crossover \
 persistra state get backtest.results
 ```
 
+## Multi-Exchange Support
+
+The backtest engine supports spot (Kraken), futures (Kraken Futures), and forex (OANDA) through exchange auto-detection.
+
+### Futures Backtesting
+
+```bash
+# Ingest futures data
+persistra process run data_ingestor -p symbols=BTC-PERP,ETH-PERP -p exchange=kraken_futures -p timeframe=1h
+
+# Backtest with margin mode (auto-detected from FuturesInstrument)
+persistra process run sma_crossover -p symbols=BTC-PERP,ETH-PERP -p exchange=kraken_futures -p timeframe=1h
+```
+
+Futures backtesting includes:
+- **Margin simulation**: Initial margin deducted per trade based on leverage
+- **Funding rate charges**: Applied every 8 hours (default 0.01%)
+- **Liquidation tracking**: Positions closed if margin falls below maintenance
+
+### Forex Backtesting
+
+```bash
+# Ingest OANDA data
+persistra process run data_ingestor -p symbols=EUR/USD,GBP/USD -p exchange=oanda -p timeframe=1h
+
+# Backtest with spread simulation
+persistra process run sma_crossover -p symbols=EUR/USD,GBP/USD -p exchange=oanda -p timeframe=1h
+```
+
+Forex backtesting includes:
+- **Spread simulation**: Configurable `spread_pips` parameter
+
+### Batch Backtesting
+
+For systematic parameter optimization, see the [Batch Backtesting Guide](batch-backtesting.md).
+
+### Stress Testing
+
+For Monte Carlo simulation of backtest results, see the [Stress Testing Guide](stress-testing.md).
+
 ## Example: Parameter Sweep
 
 ```bash

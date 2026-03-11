@@ -217,11 +217,39 @@ persistra process start sma_crossover_live \
 
 Restarting re-initializes the context, re-connects the WebSocket, and re-warms the strategy. Paper trading state (equity, positions) does **not** carry over between restarts — each start begins fresh with `initial_cash`.
 
+## Multi-Exchange Paper Trading
+
+The paper trading system supports multiple exchanges. The exchange is auto-detected from the universe instruments, or can be set explicitly.
+
+### Futures Paper Trading
+
+```bash
+persistra process start sma_crossover_live \
+  -p mode=paper \
+  -p symbols=BTC-PERP,ETH-PERP \
+  -p exchange=kraken_futures \
+  -p timeframe=1m
+```
+
+Uses `LiveFuturesFeed` for real-time Kraken Futures WebSocket data with `SimulatedBroker(margin_mode=True)` for margin simulation. See the [Futures Trading Guide](futures-trading.md) for details.
+
+### Forex Paper Trading
+
+```bash
+persistra process start sma_crossover_live \
+  -p mode=paper \
+  -p symbols=EUR/USD,GBP/USD \
+  -p exchange=oanda \
+  -p timeframe=1m
+```
+
+Uses `LiveOandaFeed` for OANDA streaming data with `SimulatedBroker(spread_pips=...)` for spread simulation. See the [Forex Trading Guide](forex-trading.md) for details.
+
 ## Transitioning to Live
 
 Once you're satisfied with paper trading results:
 
-1. Fund your Kraken account
+1. Fund your exchange account
 2. Set API credentials (see the [Live Trading Guide](live-trading.md))
 3. Change `mode=paper` to `mode=live` — the strategy, parameters, symbols, and data feed are identical
 

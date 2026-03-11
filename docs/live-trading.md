@@ -324,15 +324,55 @@ After stopping:
 
 **WebSocket disconnects** — The feed reconnects automatically with exponential backoff (5s → 10s → 20s → ... → 60s max). Check logs for reconnection messages.
 
+## Multi-Exchange Live Trading
+
+The live trading system supports multiple exchanges. The exchange is auto-detected from the universe instruments.
+
+### Kraken Futures Live Trading
+
+```bash
+persistra process start sma_crossover_live \
+  -p mode=live \
+  -p symbols=BTC-PERP,ETH-PERP \
+  -p exchange=kraken_futures \
+  -p timeframe=1m \
+  -p quantity=0.001
+```
+
+Requires `KRAKEN_FUTURES_API_KEY` and `KRAKEN_FUTURES_API_SECRET` environment variables. Uses `KrakenFuturesBroker` for order execution and `LiveFuturesFeed` for WebSocket data. See the [Futures Trading Guide](futures-trading.md).
+
+### OANDA Forex Live Trading
+
+```bash
+persistra process start sma_crossover_live \
+  -p mode=live \
+  -p symbols=EUR/USD,GBP/USD \
+  -p exchange=oanda \
+  -p timeframe=1m \
+  -p quantity=100
+```
+
+Requires `OANDA_API_TOKEN`, `OANDA_ACCOUNT_ID`, and `OANDA_ENVIRONMENT` environment variables. Uses `OandaBroker` for order execution and `LiveOandaFeed` for streaming data. See the [Forex Trading Guide](forex-trading.md).
+
+## Web Dashboard
+
+View live positions, equity, signals, and account state in the interactive web dashboard:
+
+```bash
+persistra process start dashboard -p port=8050
+```
+
+Then open `http://localhost:8050` in your browser. See the [Dashboard Guide](dashboard.md).
+
 ## Checklist Before Going Live
 
 - [ ] Paper traded the same strategy/parameters/symbols for at least several days
 - [ ] Reviewed paper trading logs — signals and fills make sense for all symbols
-- [ ] Kraken account funded
+- [ ] Exchange account funded (Kraken, Kraken Futures, or OANDA)
 - [ ] API key created with correct permissions (no withdrawal permission)
 - [ ] API credentials in environment variables
-- [ ] `KrakenBroker().get_account()` returns correct balance
-- [ ] Starting with minimal `quantity` (e.g., 0.0001 BTC)
+- [ ] Broker connection verified (e.g., `KrakenBroker().get_account()`)
+- [ ] Starting with minimal `quantity`
 - [ ] `max_position_size` set conservatively per instrument
 - [ ] Risk monitor running
 - [ ] Kill switch state is `false`: `persistra state get risk.kill_switch`

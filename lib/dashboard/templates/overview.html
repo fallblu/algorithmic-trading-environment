@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% set active_page = "overview" %}
+
+{% block title %}Overview - Trader Dashboard{% endblock %}
+{% block page_title %}Overview{% endblock %}
+
+{% block content %}
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="stat-value">{{ stats.total_backtests }}</div>
+        <div class="stat-label">Backtests</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">{{ stats.total_batch_runs }}</div>
+        <div class="stat-label">Batch Runs</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">{{ stats.total_stress_tests }}</div>
+        <div class="stat-label">Stress Tests</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">{% if market_data_exists %}Active{% else %}None{% endif %}</div>
+        <div class="stat-label">Market Data</div>
+    </div>
+</div>
+
+<section class="card">
+    <h2>Recent Results</h2>
+    {% if stats.recent_results %}
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Type</th>
+                <th>ID</th>
+                <th>Timestamp</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for result in stats.recent_results %}
+            <tr>
+                <td><span class="badge badge-{{ result.get('type', 'unknown') }}">{{ result.get('type', 'unknown') }}</span></td>
+                <td><code>{{ result.get('id', '')[:12] }}</code></td>
+                <td>{{ result.get('timestamp', 'N/A') }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="empty-state">No results yet. Run a backtest to get started.</p>
+    {% endif %}
+</section>
+
+<section class="card">
+    <h2>System Info</h2>
+    <dl class="info-list">
+        <dt>Data Directory</dt>
+        <dd><code>{{ data_dir }}</code></dd>
+    </dl>
+</section>
+{% endblock %}

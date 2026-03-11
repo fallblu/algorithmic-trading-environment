@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% set active_page = "batch" %}
+
+{% block title %}Batch Run {{ result_id[:12] }} - Trader Dashboard{% endblock %}
+{% block page_title %}Batch Run Detail{% endblock %}
+
+{% block content %}
+<div class="breadcrumb">
+    <a href="/batch">Batch Runs</a> &raquo; <code>{{ result_id[:12] }}</code>
+</div>
+
+<section class="card">
+    <h2>Metadata</h2>
+    <dl class="info-list">
+        {% for key, value in result.items() %}
+        {% if key not in ('heatmap',) %}
+        <dt>{{ key }}</dt>
+        <dd>{{ value }}</dd>
+        {% endif %}
+        {% endfor %}
+    </dl>
+</section>
+
+{% if heatmap_chart_html %}
+<section class="card">
+    <h2>Parameter Heatmap</h2>
+    <div class="chart-container">
+        {{ heatmap_chart_html | safe }}
+    </div>
+</section>
+{% endif %}
+{% endblock %}

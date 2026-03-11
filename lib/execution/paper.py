@@ -7,18 +7,34 @@ from decimal import Decimal
 
 from broker.base import Broker
 from broker.simulated import SimulatedBroker
-from data.live import LiveFeed
 from data.price_panel import PricePanel
 from data.universe import Universe
 from execution.context import ExecutionContext
+from models.instrument import FuturesInstrument
 from risk.manager import RiskManager
 from strategy.base import Strategy
 
 log = logging.getLogger(__name__)
 
 
+def _create_feed(exchange: str):
+    """Create the appropriate live feed for the given exchange."""
+    if exchange == "kraken_futures":
+        from data.live_futures import LiveFuturesFeed
+        return LiveFuturesFeed()
+    elif exchange == "oanda":
+        from data.live_oanda import LiveOandaFeed
+        return LiveOandaFeed()
+    else:
+        from data.live import LiveFeed
+        return LiveFeed()
+
+
 class PaperContext(ExecutionContext):
     """Paper trading: live market data with simulated execution.
+
+    Supports spot (Kraken), futures (Kraken Futures), and forex (OANDA)
+    via exchange auto-detection from universe instruments.
 
     Lifecycle:
         1. __init__() — creates LiveFeed and SimulatedBroker
@@ -37,13 +53,35 @@ class PaperContext(ExecutionContext):
         fee_rate: Decimal = Decimal("0.0026"),
         slippage_pct: Decimal = Decimal("0.0001"),
         max_position_size: Decimal = Decimal("1.0"),
+        exchange: str | None = None,
+        margin_mode: bool | None = None,
+        leverage: Decimal = Decimal("1"),
+        spread_pips: Decimal = Decimal("0"),
     ):
         self._universe = universe
-        self._feed = LiveFeed()
+
+        # Auto-detect exchange from universe
+        if exchange is None:
+            first_inst = next(iter(universe.instruments.values()), None)
+            exchange = first_inst.exchange if first_inst else "kraken"
+        self._exchange = exchange
+
+        self._feed = _create_feed(exchange)
+
+        # Auto-detect margin mode from universe instruments
+        if margin_mode is None:
+            margin_mode = any(
+                isinstance(inst, FuturesInstrument)
+                for inst in universe.instruments.values()
+            )
+
         self._broker = SimulatedBroker(
             initial_cash=initial_cash,
             fee_rate=fee_rate,
             slippage_pct=slippage_pct,
+            margin_mode=margin_mode,
+            leverage=leverage,
+            spread_pips=spread_pips,
         )
         self._risk_manager = RiskManager(max_position_size=max_position_size)
         self._current_time = datetime.now(timezone.utc)

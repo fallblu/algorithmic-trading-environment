@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% set active_page = "signals" %}
+
+{% block title %}Signals - Trader Dashboard{% endblock %}
+{% block page_title %}Signals{% endblock %}
+
+{% block content %}
+{% if signals %}
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>Time</th>
+            <th>Symbol</th>
+            <th>Type</th>
+            <th>Direction</th>
+            <th>Strength</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for sig in signals %}
+        <tr>
+            <td>{{ sig.get('timestamp', 'N/A') }}</td>
+            <td>{{ sig.get('symbol', 'N/A') }}</td>
+            <td>{{ sig.get('type', 'N/A') }}</td>
+            <td><span class="badge badge-{{ sig.get('direction', 'neutral') }}">{{ sig.get('direction', 'N/A') }}</span></td>
+            <td>{{ sig.get('strength', 'N/A') }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<div class="empty-state">
+    <p>No signals detected. Run a scan to generate signals.</p>
+</div>
+{% endif %}
+{% endblock %}

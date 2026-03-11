@@ -1,4 +1,4 @@
-"""LiveContext — real market data with real Kraken broker execution, multi-symbol support."""
+"""LiveContext — real market data with real broker execution, multi-symbol support."""
 
 import logging
 from collections import defaultdict
@@ -6,8 +6,6 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from broker.base import Broker
-from broker.kraken import KrakenBroker
-from data.live import LiveFeed
 from data.price_panel import PricePanel
 from data.universe import Universe
 from execution.context import ExecutionContext
@@ -18,8 +16,37 @@ from strategy.base import Strategy
 log = logging.getLogger(__name__)
 
 
+def _create_live_feed(exchange: str):
+    """Create the appropriate live feed for the given exchange."""
+    if exchange == "kraken_futures":
+        from data.live_futures import LiveFuturesFeed
+        return LiveFuturesFeed()
+    elif exchange == "oanda":
+        from data.live_oanda import LiveOandaFeed
+        return LiveOandaFeed()
+    else:
+        from data.live import LiveFeed
+        return LiveFeed()
+
+
+def _create_live_broker(exchange: str) -> Broker:
+    """Create the appropriate broker for the given exchange."""
+    if exchange == "kraken_futures":
+        from broker.kraken_futures import KrakenFuturesBroker
+        return KrakenFuturesBroker()
+    elif exchange == "oanda":
+        from broker.oanda import OandaBroker
+        return OandaBroker()
+    else:
+        from broker.kraken import KrakenBroker
+        return KrakenBroker()
+
+
 class LiveContext(ExecutionContext):
     """Live trading: real market data with real broker execution.
+
+    Supports spot (Kraken), futures (Kraken Futures), and forex (OANDA)
+    via exchange auto-detection or explicit exchange parameter.
 
     Same lifecycle as PaperContext:
         subscribe_all() -> warmup() -> run_once() per daemon tick -> shutdown()
@@ -33,10 +60,18 @@ class LiveContext(ExecutionContext):
         max_position_size: Decimal = Decimal("1.0"),
         max_order_value: Decimal = Decimal("100000"),
         daily_loss_limit: Decimal | None = Decimal("-500"),
+        exchange: str | None = None,
     ):
         self._universe = universe
-        self._feed = LiveFeed()
-        self._broker = KrakenBroker()
+
+        # Auto-detect exchange from universe
+        if exchange is None:
+            first_inst = next(iter(universe.instruments.values()), None)
+            exchange = first_inst.exchange if first_inst else "kraken"
+        self._exchange = exchange
+
+        self._feed = _create_live_feed(exchange)
+        self._broker = _create_live_broker(exchange)
         self._risk_manager = RiskManager(
             max_position_size=max_position_size,
             max_order_value=max_order_value,

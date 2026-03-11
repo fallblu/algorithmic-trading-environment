@@ -10,6 +10,18 @@ packages = [
     "requests>=2.31",
     "numpy>=1.26",
     "websockets>=16.0",
+    "httpx>=0.27",
+    "scipy>=1.12",
+    "fastapi>=0.109",
+    "uvicorn>=0.27",
+    "jinja2>=3.1",
+    "plotly>=5.18",
+    "pytest>=8.0",
+    "pytest-cov>=4.1",
+]
+
+optional_packages = [
+    "hmmlearn>=0.3",
 ]
 
 [state.schema]
@@ -27,3 +39,21 @@ execution_mode = { type = "str", default = "backtest" }
 
 # Backtest universe
 backtest_symbols = { type = "str", default = "BTC/USD" }
+
+# Data ingestor
+last_update = { type = "str", default = "" }
+
+# Analysis
+analysis_symbol = { type = "str", default = "BTC/USD" }
+analysis_timeframe = { type = "str", default = "1h" }
+analysis_exchange = { type = "str", default = "kraken" }
+
+# Scanning
+scan_symbols = { type = "str", default = "BTC/USD,ETH/USD" }
+scan_timeframe = { type = "str", default = "1h" }
+scan_exchange = { type = "str", default = "kraken" }
+
+# Correlation
+correlation_symbols = { type = "str", default = "BTC/USD,ETH/USD" }
+correlation_timeframe = { type = "str", default = "1h" }
+correlation_exchange = { type = "str", default = "kraken" }
