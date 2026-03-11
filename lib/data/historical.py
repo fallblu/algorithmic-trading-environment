@@ -1,5 +1,6 @@
 """HistoricalFeed — replays bars from the MarketDataStore."""
 
+import logging
 from datetime import datetime
 
 from data.feed import DataFeed
@@ -7,6 +8,8 @@ from data.store import MarketDataStore
 from data.universe import Universe
 from models.bar import Bar
 from models.instrument import Instrument
+
+log = logging.getLogger(__name__)
 
 
 class HistoricalFeed(DataFeed):
@@ -23,7 +26,7 @@ class HistoricalFeed(DataFeed):
 
     def subscribe(self, instrument: Instrument, timeframe: str) -> None:
         """Not used for historical feed — bars are loaded via historical_bars()."""
-        pass
+        log.debug("subscribe() is a no-op for HistoricalFeed; use load_universe() instead")
 
     def next_bar(self) -> Bar | None:
         if self._index >= len(self._bars):
