@@ -1,0 +1,26 @@
+[environment]
+name = "trading"
+description = "Systematic/quantitative backtesting and trading environment"
+python = "3.12"
+
+[dependencies]
+packages = [
+    "pandas>=2.0",
+    "pyarrow>=14.0",
+    "requests>=2.31",
+    "numpy>=1.26",
+    "websockets>=16.0",
+]
+
+[state.schema]
+# Account
+account_balances = { type = "dict", default = {}, history = 100 }
+account_equity = { type = "float", default = 0.0, history = 1000 }
+
+# Portfolio-level
+total_exposure = { type = "float", default = 0.0 }
+daily_pnl = { type = "float", default = 0.0, history = 365 }
+max_drawdown = { type = "float", default = 0.0 }
+
+# Execution mode
+execution_mode = { type = "str", default = "backtest" }
