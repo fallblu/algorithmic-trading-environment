@@ -17,17 +17,30 @@ def run(
     backfill_days: int = 365,
     exchange: str = "kraken",
 ):
-    """Fetch OHLCV bars from Kraken and store in Parquet.
+    """Fetch OHLCV bars from an exchange and store in Parquet.
 
     Accepts comma-separated symbols (e.g. "BTC/USD,ETH/USD").
+    Supports exchanges: kraken, kraken_futures, oanda.
     """
-    from data.kraken_api import backfill_ohlcv
     from data.store import MarketDataStore
 
     data_dir = Path(env.path) / ".persistra" / "market_data"
     store = MarketDataStore(data_dir)
 
     symbol_list = [s.strip() for s in symbols.split(",")]
+
+    # Select the correct backfill function based on exchange
+    if exchange == "kraken":
+        from data.kraken_api import backfill_ohlcv
+        backfill_fn = backfill_ohlcv
+    elif exchange == "kraken_futures":
+        from data.kraken_futures_api import backfill_ohlcv_futures
+        backfill_fn = backfill_ohlcv_futures
+    elif exchange == "oanda":
+        from data.oanda_api import backfill_candles
+        backfill_fn = backfill_candles
+    else:
+        raise ValueError(f"Unsupported exchange: {exchange}")
 
     for symbol in symbol_list:
         end = datetime.now(timezone.utc)
@@ -47,7 +60,7 @@ def run(
             log.info("No existing data. Backfilling %d days of %s %s",
                      backfill_days, symbol, timeframe)
 
-        bars = backfill_ohlcv(
+        bars = backfill_fn(
             symbol=symbol,
             timeframe=timeframe,
             start=start,

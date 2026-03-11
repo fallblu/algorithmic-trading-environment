@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% set active_page = "market_data" %}
+
+{% block title %}Market Data - Trader Dashboard{% endblock %}
+{% block page_title %}Market Data{% endblock %}
+
+{% block content %}
+<section class="card">
+    <h2>Available Data</h2>
+    {% if available %}
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Exchange</th>
+                <th>Symbol</th>
+                <th>Timeframes</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in available %}
+            <tr>
+                <td>{{ item.exchange }}</td>
+                <td>{{ item.symbol }}</td>
+                <td>
+                    {% for tf in item.timeframes %}
+                    <a href="/data?exchange={{ item.exchange }}&symbol={{ item.symbol }}&timeframe={{ tf }}" class="btn btn-sm">{{ tf }}</a>
+                    {% endfor %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="empty-state">No market data found. Run the data ingestor to fetch data.</p>
+    {% endif %}
+</section>
+
+{% if data_summary %}
+<section class="card">
+    <h2>Data Summary: {{ data_summary.symbol }} ({{ data_summary.timeframe }})</h2>
+    <dl class="info-list">
+        <dt>Exchange</dt>
+        <dd>{{ data_summary.exchange }}</dd>
+        <dt>Start</dt>
+        <dd>{{ data_summary.start }}</dd>
+        <dt>End</dt>
+        <dd>{{ data_summary.end }}</dd>
+    </dl>
+</section>
+{% endif %}
+{% endblock %}

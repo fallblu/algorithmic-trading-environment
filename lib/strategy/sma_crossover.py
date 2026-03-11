@@ -7,10 +7,12 @@ import pandas as pd
 
 from models.order import Order, OrderSide, OrderType
 from strategy.base import Strategy
+from strategy.registry import register
 
 log = logging.getLogger(__name__)
 
 
+@register("sma_crossover")
 class SmaCrossover(Strategy):
     """Simple Moving Average crossover strategy.
 

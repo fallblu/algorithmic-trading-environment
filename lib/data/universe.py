@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 from decimal import Decimal
 
-from models.instrument import Instrument
+from models.instrument import FuturesInstrument, Instrument
 
 
 # Sensible defaults for common Kraken pairs
@@ -20,6 +20,33 @@ _KRAKEN_DEFAULTS: dict[str, dict] = {
 }
 
 _DEFAULT_SPECS = {"tick_size": "0.01", "lot_size": "0.001", "min_notional": "5"}
+
+# Kraken Futures defaults
+_KRAKEN_FUTURES_DEFAULTS: dict[str, dict] = {
+    "BTC-PERP": {"tick_size": "0.5", "lot_size": "0.001", "min_notional": "5", "max_leverage": "50"},
+    "ETH-PERP": {"tick_size": "0.01", "lot_size": "0.01", "min_notional": "5", "max_leverage": "50"},
+    "SOL-PERP": {"tick_size": "0.001", "lot_size": "0.1", "min_notional": "5", "max_leverage": "25"},
+    "XRP-PERP": {"tick_size": "0.0001", "lot_size": "10", "min_notional": "5", "max_leverage": "25"},
+    "DOGE-PERP": {"tick_size": "0.00001", "lot_size": "100", "min_notional": "5", "max_leverage": "10"},
+    "ADA-PERP": {"tick_size": "0.0001", "lot_size": "10", "min_notional": "5", "max_leverage": "10"},
+    "AVAX-PERP": {"tick_size": "0.001", "lot_size": "0.1", "min_notional": "5", "max_leverage": "10"},
+    "DOT-PERP": {"tick_size": "0.001", "lot_size": "1", "min_notional": "5", "max_leverage": "10"},
+    "LINK-PERP": {"tick_size": "0.001", "lot_size": "1", "min_notional": "5", "max_leverage": "10"},
+}
+
+# OANDA forex defaults with pip-based tick sizes
+_OANDA_DEFAULTS: dict[str, dict] = {
+    "EUR/USD": {"tick_size": "0.00001", "lot_size": "1", "min_notional": "1"},
+    "GBP/USD": {"tick_size": "0.00001", "lot_size": "1", "min_notional": "1"},
+    "USD/JPY": {"tick_size": "0.001", "lot_size": "1", "min_notional": "1"},
+    "AUD/USD": {"tick_size": "0.00001", "lot_size": "1", "min_notional": "1"},
+    "USD/CAD": {"tick_size": "0.00001", "lot_size": "1", "min_notional": "1"},
+    "USD/CHF": {"tick_size": "0.00001", "lot_size": "1", "min_notional": "1"},
+    "NZD/USD": {"tick_size": "0.00001", "lot_size": "1", "min_notional": "1"},
+    "EUR/GBP": {"tick_size": "0.00001", "lot_size": "1", "min_notional": "1"},
+    "EUR/JPY": {"tick_size": "0.001", "lot_size": "1", "min_notional": "1"},
+    "GBP/JPY": {"tick_size": "0.001", "lot_size": "1", "min_notional": "1"},
+}
 
 
 @dataclass(frozen=True)
@@ -53,6 +80,62 @@ class Universe:
                 quote=quote,
                 exchange=exchange,
                 asset_class="crypto",
+                tick_size=Decimal(specs["tick_size"]),
+                lot_size=Decimal(specs["lot_size"]),
+                min_notional=Decimal(specs["min_notional"]),
+            )
+        return cls(instruments=instruments, timeframe=timeframe)
+
+    @classmethod
+    def from_futures_symbols(
+        cls,
+        symbols: list[str],
+        timeframe: str,
+        exchange: str = "kraken_futures",
+    ) -> "Universe":
+        """Build a Universe from futures symbol strings like 'BTC-PERP'."""
+        instruments: dict[str, Instrument] = {}
+        for symbol in symbols:
+            base = symbol.split("-")[0]
+            specs = _KRAKEN_FUTURES_DEFAULTS.get(symbol, {
+                "tick_size": "0.01", "lot_size": "0.001",
+                "min_notional": "5", "max_leverage": "50",
+            })
+            instruments[symbol] = FuturesInstrument(
+                symbol=symbol,
+                base=base,
+                quote="USD",
+                exchange=exchange,
+                asset_class="crypto_futures",
+                tick_size=Decimal(specs["tick_size"]),
+                lot_size=Decimal(specs["lot_size"]),
+                min_notional=Decimal(specs["min_notional"]),
+                max_leverage=Decimal(specs["max_leverage"]),
+            )
+        return cls(instruments=instruments, timeframe=timeframe)
+
+    @classmethod
+    def from_forex_symbols(
+        cls,
+        symbols: list[str],
+        timeframe: str,
+        exchange: str = "oanda",
+    ) -> "Universe":
+        """Build a Universe from forex symbol strings like 'EUR/USD'."""
+        instruments: dict[str, Instrument] = {}
+        for symbol in symbols:
+            parts = symbol.split("/")
+            base = parts[0]
+            quote = parts[1] if len(parts) > 1 else "USD"
+            specs = _OANDA_DEFAULTS.get(symbol, {
+                "tick_size": "0.00001", "lot_size": "1", "min_notional": "1",
+            })
+            instruments[symbol] = Instrument(
+                symbol=symbol,
+                base=base,
+                quote=quote,
+                exchange=exchange,
+                asset_class="forex",
                 tick_size=Decimal(specs["tick_size"]),
                 lot_size=Decimal(specs["lot_size"]),
                 min_notional=Decimal(specs["min_notional"]),

@@ -25,9 +25,15 @@ class SimulatedBroker(Broker):
         quote_currency: str = "USD",
         fee_rate: Decimal = Decimal("0.0026"),   # Kraken taker fee
         slippage_pct: Decimal = Decimal("0.0001"),  # 1 bps fixed slippage
+        margin_mode: bool = False,
+        leverage: Decimal = Decimal("1"),
+        spread_pips: Decimal = Decimal("0"),
     ):
         self.fee_rate = fee_rate
         self.slippage_pct = slippage_pct
+        self.margin_mode = margin_mode
+        self.leverage = leverage
+        self.spread_pips = spread_pips
 
         self._account = Account(
             balances={quote_currency: initial_cash},
@@ -211,8 +217,15 @@ class SimulatedBroker(Broker):
         return fill
 
     def _apply_slippage(self, price: Decimal, side: OrderSide) -> Decimal:
-        """Apply slippage to a price."""
+        """Apply slippage to a price. For forex, also applies spread."""
         slippage = price * self.slippage_pct
+        if self.spread_pips > 0:
+            # Forex spread: buy at ask (mid + half spread), sell at bid (mid - half spread)
+            half_spread = self.spread_pips * Decimal("0.0001") / 2
+            if side == OrderSide.BUY:
+                return price + half_spread + slippage
+            else:
+                return price - half_spread - slippage
         if side == OrderSide.BUY:
             return price + slippage
         else:
@@ -234,16 +247,28 @@ class SimulatedBroker(Broker):
                 last_updated=fill.timestamp,
             )
             self._positions[symbol] = pos
+
+            if self.margin_mode:
+                notional = fill.price * fill.quantity
+                margin = notional / self.leverage
+                pos.margin_used = margin
+                self._account.margin_used += margin
+                pos.liquidation_price = self._calc_liquidation_price(pos)
         elif pos.side == fill.side:
             # Adding to existing position — update VWAP entry
             total_cost = pos.entry_price * pos.quantity + fill.price * fill.quantity
             pos.quantity += fill.quantity
             pos.entry_price = total_cost / pos.quantity
             pos.last_updated = fill.timestamp
+
+            if self.margin_mode:
+                new_margin = fill.price * fill.quantity / self.leverage
+                pos.margin_used += new_margin
+                self._account.margin_used += new_margin
+                pos.liquidation_price = self._calc_liquidation_price(pos)
         else:
             # Reducing or reversing position
             if fill.quantity >= pos.quantity:
-                # Close position (and possibly reverse)
                 closed_qty = pos.quantity
                 if pos.side == OrderSide.BUY:
                     pnl = (fill.price - pos.entry_price) * closed_qty
@@ -252,37 +277,98 @@ class SimulatedBroker(Broker):
                 pos.realized_pnl += pnl
                 self._account.realized_pnl += pnl
 
+                if self.margin_mode:
+                    self._account.margin_used -= pos.margin_used
+                    pos.margin_used = Decimal("0")
+
                 remaining = fill.quantity - closed_qty
                 if remaining > 0:
-                    # Reverse into new position
                     pos.side = fill.side
                     pos.quantity = remaining
                     pos.entry_price = fill.price
                     pos.unrealized_pnl = Decimal("0")
+
+                    if self.margin_mode:
+                        margin = fill.price * remaining / self.leverage
+                        pos.margin_used = margin
+                        self._account.margin_used += margin
+                        pos.liquidation_price = self._calc_liquidation_price(pos)
                 else:
                     pos.quantity = Decimal("0")
                     pos.unrealized_pnl = Decimal("0")
+                    pos.liquidation_price = None
                 pos.last_updated = fill.timestamp
             else:
-                # Partial close
                 if pos.side == OrderSide.BUY:
                     pnl = (fill.price - pos.entry_price) * fill.quantity
                 else:
                     pnl = (pos.entry_price - fill.price) * fill.quantity
                 pos.realized_pnl += pnl
                 self._account.realized_pnl += pnl
+
+                if self.margin_mode:
+                    margin_released = pos.margin_used * fill.quantity / pos.quantity
+                    pos.margin_used -= margin_released
+                    self._account.margin_used -= margin_released
+
                 pos.quantity -= fill.quantity
                 pos.last_updated = fill.timestamp
+
+                if self.margin_mode and pos.quantity > 0:
+                    pos.liquidation_price = self._calc_liquidation_price(pos)
 
         # Deduct fees from cash
         self._account.balances[self._quote_currency] -= fill.fee
 
-        # Update cash for the trade
-        notional = fill.price * fill.quantity
-        if fill.side == OrderSide.BUY:
-            self._account.balances[self._quote_currency] -= notional
+        if self.margin_mode:
+            # In margin mode, cash is not reduced by full notional — only margin is required
+            # PnL is realized/unrealized on the full notional
+            pass
         else:
-            self._account.balances[self._quote_currency] += notional
+            # Spot: update cash for the trade
+            notional = fill.price * fill.quantity
+            if fill.side == OrderSide.BUY:
+                self._account.balances[self._quote_currency] -= notional
+            else:
+                self._account.balances[self._quote_currency] += notional
+
+    def apply_funding(self, symbol: str, funding_rate: Decimal) -> None:
+        """Apply funding rate charges/credits for futures positions.
+
+        Called at 8-hour intervals during backtest/paper.
+        Long + positive rate = pay (debit); Short + positive rate = receive (credit).
+        """
+        pos = self._positions.get(symbol)
+        if pos is None or pos.quantity == 0:
+            return
+
+        notional = pos.quantity * pos.entry_price
+        charge = notional * funding_rate
+
+        if pos.side == OrderSide.BUY:
+            # Long pays positive funding
+            self._account.balances[self._quote_currency] -= charge
+        else:
+            # Short receives positive funding
+            self._account.balances[self._quote_currency] += charge
+
+    def _calc_liquidation_price(self, pos: Position) -> Decimal | None:
+        """Calculate liquidation price based on maintenance margin."""
+        if not self.margin_mode or pos.quantity == 0:
+            return None
+
+        from models.instrument import FuturesInstrument
+        if isinstance(pos.instrument, FuturesInstrument):
+            maint_rate = pos.instrument.maintenance_margin_rate
+        else:
+            maint_rate = Decimal("0.005")
+
+        if pos.side == OrderSide.BUY:
+            # Liquidation when equity = maintenance margin
+            # liq_price = entry * (1 - 1/leverage + maint_rate)
+            return pos.entry_price * (1 - 1 / self.leverage + maint_rate)
+        else:
+            return pos.entry_price * (1 + 1 / self.leverage - maint_rate)
 
     def _update_equity(self, bar: Bar) -> None:
         """Recalculate account equity after processing a bar."""
@@ -293,11 +379,16 @@ class SimulatedBroker(Broker):
                 pos.update_unrealized_pnl(bar.close)
             unrealized += pos.unrealized_pnl
 
-        # For spot: equity = cash + sum(position_value)
-        position_value = Decimal("0")
-        for pos in self._positions.values():
-            if pos.quantity > 0:
-                position_value += pos.quantity * pos.entry_price + pos.unrealized_pnl
-
         self._account.unrealized_pnl = unrealized
-        self._account.equity = cash + position_value
+
+        if self.margin_mode:
+            # For futures: equity = cash + unrealized PnL
+            self._account.equity = cash + unrealized
+            self._account.margin_available = self._account.equity - self._account.margin_used
+        else:
+            # For spot: equity = cash + sum(position_value)
+            position_value = Decimal("0")
+            for pos in self._positions.values():
+                if pos.quantity > 0:
+                    position_value += pos.quantity * pos.entry_price + pos.unrealized_pnl
+            self._account.equity = cash + position_value
