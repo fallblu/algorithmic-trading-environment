@@ -1,15 +1,16 @@
-"""SMA Crossover live process — daemon for paper and live trading.
+"""Live trader process — daemon for paper and live trading.
 
-Polls every 10s for new bars from the Kraken WebSocket feed.
+Polls every 10s for new bars from the exchange WebSocket feed.
 On first tick: creates context, subscribes, warms up indicators.
 On subsequent ticks: calls ctx.run_once() and persists state.
 
 Usage:
-    persistra process start sma_crossover_live -p mode=paper -p symbols=BTC/USD,ETH/USD -p timeframe=1m
-    persistra process start sma_crossover_live -p mode=live -p symbols=BTC/USD,ETH/USD -p timeframe=1m
+    persistra process start live_trader -p mode=paper -p symbols=BTC/USD,ETH/USD -p timeframe=1m
+    persistra process start live_trader -p strategy=macd_trend -p mode=live -p params='{"fast_period":12}'
 """
 
 import atexit
+import json
 import logging
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -27,43 +28,55 @@ _initialized = False
 @process("daemon", interval="10s")
 def run(
     env,
+    strategy: str = "sma_crossover",
     mode: str = "paper",
     symbols: str = "BTC/USD",
     timeframe: str = "1m",
-    fast_period: int = 10,
-    slow_period: int = 30,
-    quantity: str = "0.01",
+    exchange: str = "kraken",
+    params: str = "{}",
     initial_cash: str = "10000",
-    fee_rate: str = "0.0026",
-    slippage_pct: str = "0.0001",
     max_position_size: str = "1.0",
+    warmup_bars: int = 40,
 ):
-    """Run the SMA crossover strategy in paper or live mode."""
+    """Run a registered strategy in paper or live mode.
+
+    Args:
+        strategy: Registered strategy name (e.g. sma_crossover, macd_trend).
+        mode: 'paper' or 'live'.
+        symbols: Comma-separated symbol list.
+        timeframe: Bar timeframe.
+        exchange: Exchange name for config defaults.
+        params: JSON string of strategy-specific parameters.
+        initial_cash: Starting equity (paper mode only).
+        max_position_size: Max position size as fraction of equity.
+        warmup_bars: Number of historical bars for indicator warmup.
+    """
     global _ctx, _strategy, _initialized
 
+    from config import get_exchange_config
     from data.universe import Universe
-    from strategy.sma_crossover import SmaCrossover
-
     from helpers import parse_symbols
+    from strategy.registry import get_strategy, load_all_strategies
+
+    load_all_strategies()
 
     symbol_list = parse_symbols(symbols)
     universe = Universe.from_symbols(symbol_list, timeframe)
 
-    strategy_params = {
-        "fast_period": fast_period,
-        "slow_period": slow_period,
-        "quantity": quantity,
-        "symbols": symbol_list,
-    }
+    strategy_params = json.loads(params)
+    strategy_params.setdefault("symbols", symbol_list)
 
     if not _initialized:
+        exchange_config = get_exchange_config(exchange)
+        strategy_class = get_strategy(strategy)
+
         if mode == "paper":
             from execution.paper import PaperContext
             _ctx = PaperContext(
                 universe=universe,
                 initial_cash=Decimal(initial_cash),
-                fee_rate=Decimal(fee_rate),
-                slippage_pct=Decimal(slippage_pct),
+                fee_rate=exchange_config.fee_rate,
+                slippage_pct=exchange_config.slippage_pct,
                 max_position_size=Decimal(max_position_size),
             )
         elif mode == "live":
@@ -75,14 +88,15 @@ def run(
         else:
             raise ValueError(f"Unknown mode: {mode}. Use 'paper' or 'live'.")
 
-        _strategy = SmaCrossover(_ctx, strategy_params)
+        _strategy = strategy_class(_ctx, strategy_params)
 
         _ctx.subscribe_all(timeframe)
-        _ctx.warmup(_strategy, timeframe, warmup_bars=slow_period + 10)
+        _ctx.warmup(_strategy, timeframe, warmup_bars=warmup_bars)
 
         atexit.register(_ctx.shutdown)
         _initialized = True
-        log.info("%s trading initialized for %s %s", mode.upper(), symbols, timeframe)
+        log.info("%s trading initialized: strategy=%s, symbols=%s, timeframe=%s",
+                 mode.upper(), strategy, symbols, timeframe)
 
     try:
         result = _ctx.run_once(_strategy)
@@ -96,7 +110,8 @@ def run(
             ns.set("bars_processed", result["bars_processed"])
             ns.set("fills", result["fills"])
 
-            strat_ns = env.state.ns("strategy.sma_crossover")
+            strat_ns = env.state.ns("strategy")
+            strat_ns.set("name", strategy)
             strat_ns.set("mode", mode)
             strat_ns.set("equity", str(equity))
 

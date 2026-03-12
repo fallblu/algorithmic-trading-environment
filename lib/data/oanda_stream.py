@@ -7,6 +7,7 @@ import threading
 from datetime import datetime, timezone
 from decimal import Decimal
 
+from constants import normalize_symbol, denormalize_symbol
 from models.bar import Bar
 
 log = logging.getLogger(__name__)
@@ -83,7 +84,7 @@ class OandaStream:
         token = os.environ.get("OANDA_API_TOKEN", "")
         account_id = os.environ.get("OANDA_ACCOUNT_ID", "")
 
-        oanda_instruments = ",".join(s.replace("/", "_") for s in self._instruments)
+        oanda_instruments = ",".join(normalize_symbol(s) for s in self._instruments)
         url = f"{stream_url}/v3/accounts/{account_id}/pricing/stream"
 
         delay = 1.0
@@ -128,7 +129,7 @@ class OandaStream:
     def _process_tick(self, msg: dict) -> None:
         """Process a price tick and aggregate into bars."""
         oanda_instrument = msg.get("instrument", "")
-        our_symbol = oanda_instrument.replace("_", "/")
+        our_symbol = denormalize_symbol(oanda_instrument)
 
         bids = msg.get("bids", [])
         asks = msg.get("asks", [])

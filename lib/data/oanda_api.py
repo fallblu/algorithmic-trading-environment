@@ -15,15 +15,6 @@ from models.bar import Bar
 log = logging.getLogger(__name__)
 
 
-def _to_oanda_symbol(symbol: str) -> str:
-    """Convert 'EUR/USD' to 'EUR_USD'."""
-    return normalize_symbol(symbol)
-
-def _from_oanda_symbol(oanda_symbol: str) -> str:
-    """Convert 'EUR_USD' to 'EUR/USD'."""
-    return denormalize_symbol(oanda_symbol)
-
-
 def _get_base_url() -> str:
     """Get OANDA API base URL based on environment."""
     environment = os.environ.get("OANDA_ENVIRONMENT", "practice")
@@ -70,7 +61,7 @@ def fetch_candles(
     Returns:
         List of Bar objects sorted by timestamp ascending.
     """
-    oanda_instrument = _to_oanda_symbol(symbol)
+    oanda_instrument = normalize_symbol(symbol)
     granularity = GRANULARITY_MAP.get(timeframe)
     if granularity is None:
         raise ValueError(f"Unsupported timeframe: {timeframe}")
@@ -175,7 +166,7 @@ def fetch_instruments() -> list[dict]:
     instruments = []
     for inst in data.get("instruments", []):
         instruments.append({
-            "symbol": _from_oanda_symbol(inst["name"]),
+            "symbol": denormalize_symbol(inst["name"]),
             "oanda_name": inst["name"],
             "type": inst.get("type"),
             "pip_location": inst.get("pipLocation"),
@@ -191,7 +182,7 @@ def fetch_pricing(symbols: list[str]) -> dict[str, dict]:
     headers = _get_headers()
     account_id = _get_account_id()
 
-    oanda_instruments = ",".join(_to_oanda_symbol(s) for s in symbols)
+    oanda_instruments = ",".join(normalize_symbol(s) for s in symbols)
     url = f"{base_url}/v3/accounts/{account_id}/pricing"
     params = {"instruments": oanda_instruments}
 
@@ -201,7 +192,7 @@ def fetch_pricing(symbols: list[str]) -> dict[str, dict]:
 
     result = {}
     for price in data.get("prices", []):
-        our_symbol = _from_oanda_symbol(price["instrument"])
+        our_symbol = denormalize_symbol(price["instrument"])
         bids = price.get("bids", [])
         asks = price.get("asks", [])
         bid = Decimal(bids[0]["price"]) if bids else Decimal("0")

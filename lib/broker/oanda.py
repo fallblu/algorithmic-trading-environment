@@ -8,16 +8,14 @@ from decimal import Decimal
 import requests
 
 from broker.base import Broker
+from constants import normalize_symbol, denormalize_symbol
+from exceptions import OandaAPIError
 from models.account import Account
 from models.instrument import Instrument
 from models.order import Order, OrderSide, OrderStatus, OrderType
 from models.position import Position
 
 log = logging.getLogger(__name__)
-
-
-class OandaAPIError(Exception):
-    pass
 
 
 class OandaBroker(Broker):
@@ -50,11 +48,8 @@ class OandaBroker(Broker):
         self._orders: dict[str, Order] = {}
         self._oanda_to_local: dict[str, str] = {}
 
-    def _to_oanda_symbol(self, symbol: str) -> str:
-        return symbol.replace("/", "_")
-
     def submit_order(self, order: Order) -> Order:
-        oanda_instrument = self._to_oanda_symbol(order.instrument.symbol)
+        oanda_instrument = normalize_symbol(order.instrument.symbol)
 
         # Build order body
         units = str(order.quantity if order.side == OrderSide.BUY else -order.quantity)
@@ -166,7 +161,7 @@ class OandaBroker(Broker):
         return orders
 
     def get_position(self, instrument: Instrument) -> Position | None:
-        oanda_inst = self._to_oanda_symbol(instrument.symbol)
+        oanda_inst = normalize_symbol(instrument.symbol)
         url = f"{self._base_url}/v3/accounts/{self._account_id}/positions/{oanda_inst}"
 
         resp = requests.get(url, headers=self._headers, timeout=30)
@@ -213,7 +208,7 @@ class OandaBroker(Broker):
         positions = []
         for pos_data in data.get("positions", []):
             oanda_inst = pos_data.get("instrument", "")
-            our_symbol = oanda_inst.replace("_", "/")
+            our_symbol = denormalize_symbol(oanda_inst)
 
             long_units = int(pos_data.get("long", {}).get("units", "0"))
             short_units = abs(int(pos_data.get("short", {}).get("units", "0")))

@@ -37,11 +37,10 @@ def run(
     """
     from data.universe import Universe
     from execution.batch import BatchBacktest, ParameterGrid
-    from strategy.registry import get_strategy
-    # Ensure sma_crossover is registered
-    import strategy.sma_crossover  # noqa: F401
-
     from helpers import market_data_dir, parse_symbols, require_data
+    from strategy.registry import get_strategy, load_all_strategies
+
+    load_all_strategies()
 
     strategy_class = get_strategy(strategy)
     symbol_list = parse_symbols(symbols)

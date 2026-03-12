@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from constants import denormalize_symbol
+
 try:
     from fastapi import APIRouter, Query, Request
     from fastapi.responses import HTMLResponse
@@ -27,7 +29,7 @@ def _discover_symbols(data_dir: Path) -> list[dict]:
         for symbol_dir in sorted(exchange_dir.iterdir()):
             if not symbol_dir.is_dir():
                 continue
-            symbol = symbol_dir.name.replace("_", "/")
+            symbol = denormalize_symbol(symbol_dir.name)
             timeframes = [
                 p.stem for p in sorted(symbol_dir.glob("*.parquet"))
             ]
