@@ -90,15 +90,16 @@ trader/
 Before backtesting, you need historical market data. Ingest data from an exchange:
 
 ```python
+from pathlib import Path
 from data.store import MarketDataStore
-from data.kraken_api import KrakenAPI
+from data.exchange import get_exchange
 
-store = MarketDataStore()
-api = KrakenAPI()
+store = MarketDataStore(base_dir=Path(".persistra/market_data"))
+exchange = get_exchange("kraken")
 
 # Fetch 1-hour BTC/USD bars
-bars = api.get_ohlc("BTC/USD", interval=60, since=None)
-store.write_bars(bars, exchange="kraken")
+bars = exchange.fetch_ohlcv("BTC/USD", timeframe="1h")
+store.write_bars(bars, exchange="kraken", timeframe="1h")
 ```
 
 Or use the data ingestor process if configured with Persistra.
@@ -171,9 +172,9 @@ print(f"Total fills:    {len(results['fills'])}")
 Compute performance metrics:
 
 ```python
-from analytics.performance import compute_metrics
+from analytics.performance import compute_performance
 
-metrics = compute_metrics(
+metrics = compute_performance(
     equity_curve=results["equity_curve"],
     fills=results["fills"],
 )

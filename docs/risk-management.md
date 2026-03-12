@@ -49,7 +49,7 @@ Pass it when creating the risk manager:
 ```python
 from risk.manager import RiskManager
 
-risk_mgr = RiskManager(config=config)
+risk_mgr = RiskManager(risk_config=config)
 ```
 
 Or pass individual parameters:
@@ -116,17 +116,15 @@ Tracks the high-water mark (HWM) of account equity:
 
 ### Check Results
 
-Each check returns a structured result:
+The `check()` method returns a `bool` — `True` if all checks pass:
 
 ```python
-from risk.manager import RiskCheckResult
-
-result = risk_mgr.check(order, broker)
-if not result.passed:
-    print(f"Rejected: [{result.check_name}] {result.reason}")
+allowed = risk_mgr.check(order, broker)
+if not allowed:
+    print("Order rejected by risk manager")
 ```
 
-To see all check results:
+To see individual check results, use `check_all()`:
 
 ```python
 results = risk_mgr.check_all(order, broker)
@@ -186,14 +184,18 @@ Risk a fixed percentage of equity per trade:
 from decimal import Decimal
 from risk.sizing import FixedFractionalSizer
 
-sizer = FixedFractionalSizer(risk_pct=Decimal("0.01"))  # Risk 1% per trade
+sizer = FixedFractionalSizer(
+    risk_per_trade=Decimal("0.01"),      # Risk 1% of equity per trade
+    stop_distance_pct=Decimal("0.02"),   # Stop loss at 2% from entry
+)
 
 quantity = sizer.calculate_size(
-    equity=Decimal("10000"),
-    entry_price=Decimal("50000"),
-    stop_price=Decimal("49000"),   # Stop loss level
+    instrument=instrument,
+    signal_strength=1.0,
+    account=broker.get_account(),
+    current_price=Decimal("50000"),
 )
-# Risks $100 (1% of $10K). Distance to stop = $1000.
+# With equity=$10K: risk_amount = $100, stop_distance = $1000
 # Quantity = $100 / $1000 = 0.1
 ```
 
@@ -205,14 +207,16 @@ Size inversely proportional to ATR (volatile assets get smaller positions):
 from risk.sizing import ATRSizer
 
 sizer = ATRSizer(
-    risk_pct=Decimal("0.01"),
+    risk_per_trade=Decimal("0.01"),
     atr_multiplier=Decimal("2"),
 )
 
 quantity = sizer.calculate_size(
-    equity=Decimal("10000"),
-    entry_price=Decimal("50000"),
-    atr=Decimal("1500"),  # Current ATR
+    instrument=instrument,
+    signal_strength=1.0,
+    account=broker.get_account(),
+    current_price=Decimal("50000"),
+    volatility=Decimal("1500"),  # Current ATR value
 )
 # Stop distance = 2 * ATR = $3000
 # Quantity = ($10000 * 0.01) / $3000 = 0.033
@@ -226,13 +230,15 @@ Target a fixed portfolio volatility contribution per position:
 from risk.sizing import VolatilityScaledSizer
 
 sizer = VolatilityScaledSizer(
-    target_vol=Decimal("0.10"),  # Target 10% annualized vol per position
+    target_vol_contribution=Decimal("0.02"),  # 2% vol contribution per position
 )
 
 quantity = sizer.calculate_size(
-    equity=Decimal("10000"),
-    entry_price=Decimal("50000"),
-    annualized_vol=Decimal("0.60"),  # BTC annualized vol
+    instrument=instrument,
+    signal_strength=1.0,
+    account=broker.get_account(),
+    current_price=Decimal("50000"),
+    volatility=Decimal("0.60"),  # Annualized volatility
 )
 # Scales down position size for high-vol assets
 ```
@@ -245,26 +251,32 @@ Optimal sizing based on historical win rate and payoff ratio:
 from risk.sizing import KellySizer
 
 sizer = KellySizer(
-    fraction=Decimal("0.25"),  # Use quarter-Kelly for safety
+    win_rate=0.55,               # 55% win rate
+    avg_win_loss_ratio=1.33,     # Avg win / avg loss
+    kelly_fraction=0.25,         # Use quarter-Kelly for safety
 )
 
 quantity = sizer.calculate_size(
-    equity=Decimal("10000"),
-    entry_price=Decimal("50000"),
-    win_rate=Decimal("0.55"),
-    avg_win=Decimal("200"),
-    avg_loss=Decimal("150"),
+    instrument=instrument,
+    signal_strength=1.0,
+    account=broker.get_account(),
+    current_price=Decimal("50000"),
 )
+
+# Update stats from recent trades
+sizer.update_stats(win_rate=0.58, avg_win_loss_ratio=1.4)
 ```
 
 ### Sizer Comparison
 
-| Sizer | Best For | Requires |
-|-------|----------|----------|
-| Fixed Fractional | General purpose, clear risk per trade | Stop loss level |
-| ATR-Based | Adapting to current volatility | ATR indicator value |
-| Volatility-Scaled | Equalizing risk contribution | Annualized volatility |
-| Kelly | Maximizing long-term growth | Historical win/loss stats |
+All sizers share the same `calculate_size(instrument, signal_strength, account, current_price, volatility=None)` interface.
+
+| Sizer | Best For | Key Constructor Params |
+|-------|----------|----------------------|
+| Fixed Fractional | General purpose, clear risk per trade | `risk_per_trade`, `stop_distance_pct` |
+| ATR-Based | Adapting to current volatility | `risk_per_trade`, `atr_multiplier` + pass `volatility` |
+| Volatility-Scaled | Equalizing risk contribution | `target_vol_contribution` + pass `volatility` |
+| Kelly | Maximizing long-term growth | `win_rate`, `avg_win_loss_ratio`, `kelly_fraction` |
 
 ## Event Monitoring
 
@@ -274,7 +286,7 @@ Risk events are emitted via the event bus:
 from events import event_bus, EventType
 
 def on_risk_event(event):
-    print(f"Risk: {event.data.get('check_name')}: {event.data.get('reason')}")
+    print(f"Risk: {event.reason}")
 
 event_bus.subscribe(EventType.RISK, on_risk_event)
 ```

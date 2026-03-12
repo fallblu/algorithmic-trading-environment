@@ -57,8 +57,8 @@ class HistoricalFeed(DataFeed):
     def load_universe(
         self,
         universe: Universe,
-        start: datetime,
-        end: datetime,
+        start: datetime | None = None,
+        end: datetime | None = None,
     ) -> None:
         """Load bars for all symbols in the universe and build a timeline.
 

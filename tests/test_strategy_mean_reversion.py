@@ -34,7 +34,7 @@ class TestBollingerReversion:
         ctx = _make_ctx({"BTC/USD": btc_instrument})
         strat = BollingerReversion(ctx, params={
             "symbols": ["BTC/USD"],
-            "bb_period": 20,
+            "period": 20,
             "quantity": "0.1",
         })
         orders = strat.on_bar(panel)

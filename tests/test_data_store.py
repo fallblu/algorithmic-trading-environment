@@ -84,3 +84,36 @@ class TestWriteAndRead:
                 exchange="kraken",
             )
             assert len(loaded) == 0
+
+
+class TestHasData:
+    def test_has_data_returns_true_after_write(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = MarketDataStore(base_dir=Path(tmpdir))
+            bars = _make_bars(n=5)
+            store.write_bars(bars, exchange="kraken", timeframe="1h")
+            assert store.has_data("kraken", "BTC/USD", "1h") is True
+
+    def test_has_data_returns_false_when_empty(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = MarketDataStore(base_dir=Path(tmpdir))
+            assert store.has_data("kraken", "BTC/USD", "1h") is False
+
+
+class TestGetDateRange:
+    def test_returns_min_max_timestamps(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = MarketDataStore(base_dir=Path(tmpdir))
+            bars = _make_bars(n=10)
+            store.write_bars(bars, exchange="kraken", timeframe="1h")
+
+            result = store.get_date_range("kraken", "BTC/USD", "1h")
+            assert result is not None
+            start, end = result
+            assert start == datetime(2024, 1, 1, 0, tzinfo=timezone.utc)
+            assert end == datetime(2024, 1, 1, 9, tzinfo=timezone.utc)
+
+    def test_returns_none_when_no_data(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = MarketDataStore(base_dir=Path(tmpdir))
+            assert store.get_date_range("kraken", "BTC/USD", "1h") is None

@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from analytics.indicators import (
-    sma, ema, rsi, macd, bollinger_bands, atr, adx,
+    sma, ema, rsi, macd, bollinger_bands, atr, adx, stochastic, obv, wma,
 )
 
 
@@ -144,3 +144,88 @@ class TestADX:
         valid = result[~np.isnan(result)]
         if len(valid) > 5:
             assert valid[-1] > 20  # Should indicate trending
+
+
+class TestWMA:
+    def test_basic(self, sample_closes):
+        result = wma(sample_closes, 10)
+        assert len(result) > 0
+        assert len(result) == len(sample_closes) - 10 + 1
+
+    def test_known_values(self):
+        data = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+        result = wma(data, 3)
+        # Weights: [1, 2, 3], sum=6
+        # wma[0] = (1*1 + 2*2 + 3*3)/6 = 14/6
+        expected_0 = (1 * 1 + 2 * 2 + 3 * 3) / 6.0
+        assert abs(result[0] - expected_0) < 1e-10
+
+    def test_period_larger_than_data(self):
+        data = np.array([1.0, 2.0])
+        result = wma(data, 5)
+        assert len(result) == 0
+
+    def test_single_period(self):
+        data = np.array([10.0, 20.0, 30.0])
+        result = wma(data, 1)
+        np.testing.assert_allclose(result, data, rtol=1e-10)
+
+
+class TestStochastic:
+    def test_basic(self, sample_ohlcv):
+        opens, highs, lows, closes, volumes = sample_ohlcv
+        k, d = stochastic(highs, lows, closes)
+        assert len(k) > 0
+        assert len(d) > 0
+
+    def test_range_0_to_100(self, sample_ohlcv):
+        opens, highs, lows, closes, volumes = sample_ohlcv
+        k, d = stochastic(highs, lows, closes, k_period=14, d_period=3)
+        assert np.all(k >= 0) and np.all(k <= 100)
+        assert np.all(d >= 0) and np.all(d <= 100)
+
+    def test_insufficient_data(self):
+        data = np.array([1.0, 2.0, 3.0])
+        k, d = stochastic(data, data, data, k_period=10)
+        assert len(k) == 0
+
+    def test_flat_market(self):
+        n = 30
+        closes = np.full(n, 100.0)
+        highs = np.full(n, 100.0)
+        lows = np.full(n, 100.0)
+        k, d = stochastic(highs, lows, closes, k_period=14)
+        # When high == low, %K defaults to 50
+        assert np.all(k == 50.0)
+
+
+class TestOBV:
+    def test_basic(self, sample_ohlcv):
+        opens, highs, lows, closes, volumes = sample_ohlcv
+        result = obv(closes, volumes)
+        assert len(result) == len(closes)
+
+    def test_uptrend_increases_obv(self):
+        closes = np.array([10.0, 11.0, 12.0, 13.0, 14.0])
+        volumes = np.array([100.0, 100.0, 100.0, 100.0, 100.0])
+        result = obv(closes, volumes)
+        # Consecutive up closes: OBV should increase monotonically
+        assert result[-1] == 500.0  # 100 + 100 + 100 + 100 + 100
+
+    def test_downtrend_decreases_obv(self):
+        closes = np.array([14.0, 13.0, 12.0, 11.0, 10.0])
+        volumes = np.array([100.0, 100.0, 100.0, 100.0, 100.0])
+        result = obv(closes, volumes)
+        # First bar = 100, then -100 for each down
+        assert result[-1] == 100.0 - 400.0
+
+    def test_flat_unchanged(self):
+        closes = np.array([10.0, 10.0, 10.0])
+        volumes = np.array([100.0, 200.0, 300.0])
+        result = obv(closes, volumes)
+        # No price change -> OBV stays at initial volume
+        np.testing.assert_array_equal(result, [100.0, 100.0, 100.0])
+
+    def test_empty(self):
+        result = obv(np.array([]), np.array([]))
+        assert len(result) == 0

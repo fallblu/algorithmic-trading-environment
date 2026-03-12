@@ -257,12 +257,16 @@ Instead of hardcoding quantities, use position sizers from `risk/sizing.py`:
 ```python
 from risk.sizing import FixedFractionalSizer, ATRSizer
 
-# Risk 1% of equity per trade, stop 2 ATRs away
-sizer = FixedFractionalSizer(risk_pct=Decimal("0.01"))
+# Risk 1% of equity per trade, stop at 2% from entry
+sizer = FixedFractionalSizer(
+    risk_per_trade=Decimal("0.01"),
+    stop_distance_pct=Decimal("0.02"),
+)
 quantity = sizer.calculate_size(
-    equity=account.equity,
-    entry_price=Decimal(str(current_price)),
-    stop_price=Decimal(str(current_price - 2 * atr_value)),
+    instrument=instrument,
+    signal_strength=1.0,
+    account=account,
+    current_price=Decimal(str(current_price)),
 )
 ```
 

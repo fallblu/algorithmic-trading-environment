@@ -92,9 +92,9 @@ ctx = BacktestContext(
 ## Performance Metrics
 
 ```python
-from analytics.performance import compute_metrics
+from analytics.performance import compute_performance
 
-metrics = compute_metrics(
+metrics = compute_performance(
     equity_curve=results["equity_curve"],
     fills=results["fills"],
 )
@@ -111,7 +111,6 @@ metrics = compute_metrics(
 | `calmar_ratio` | Annualized return / max drawdown |
 | `max_drawdown` | Largest peak-to-trough decline |
 | `max_drawdown_duration` | Longest recovery period |
-| `volatility` | Annualized standard deviation of returns |
 | `num_trades` | Total completed trades |
 | `win_rate` | Fraction of profitable trades |
 | `profit_factor` | Gross profit / gross loss |
@@ -152,29 +151,38 @@ batch_results = batch.run()
 ### Analyzing Batch Results
 
 ```python
-# Get all results sorted by Sharpe ratio
-for result in batch_results.sorted_by("sharpe_ratio", descending=True):
-    print(f"fast={result.params['fast_period']}, "
-          f"slow={result.params['slow_period']}: "
-          f"Sharpe={result.metrics['sharpe_ratio']:.2f}, "
-          f"Return={result.metrics['total_return']:.2%}")
+# View all results as a DataFrame
+df = batch_results.as_dataframe()
+print(df.sort_values("sharpe_ratio", ascending=False))
 
-# Best parameters
-best = batch_results.best("sharpe_ratio")
-print(f"Best params: {best.params}")
+# Best parameters by Sharpe ratio
+best = batch_results.best_by("sharpe_ratio")
+print(f"Best params: {best['params']}")
+print(f"Best Sharpe: {best['metrics']['sharpe_ratio']:.2f}")
+
+# 2D heatmap for parameter sensitivity
+heatmap = batch_results.heatmap_data("fast_period", "slow_period", "sharpe_ratio")
+
+# 1D sensitivity analysis
+sensitivity = batch_results.sensitivity("fast_period", "sharpe_ratio")
 ```
 
 ## Advanced Analytics
 
 ### Return Distribution
 
+All statistics functions accept a DataFrame with a `close` column:
+
 ```python
+import pandas as pd
 from analytics.statistics import return_distribution
 
-dist = return_distribution(equity_curve)
-print(f"Mean daily return: {dist['mean']:.4%}")
-print(f"Skewness:          {dist['skewness']:.2f}")
-print(f"Kurtosis:          {dist['kurtosis']:.2f}")
+# Build a DataFrame from close prices
+bars_df = pd.DataFrame({"close": [float(eq) for _, eq in results["equity_curve"]]})
+dist = return_distribution(bars_df)
+print(f"Mean return:  {dist['mean']:.6f}")
+print(f"Skewness:     {dist['skewness']:.2f}")
+print(f"Kurtosis:     {dist['kurtosis']:.2f}")
 ```
 
 ### Volatility Analysis
@@ -182,9 +190,9 @@ print(f"Kurtosis:          {dist['kurtosis']:.2f}")
 ```python
 from analytics.statistics import volatility_analysis
 
-vol = volatility_analysis(equity_curve)
-print(f"Realized vol (ann): {vol['annualized_vol']:.2%}")
-print(f"Parkinson vol:      {vol['parkinson_vol']:.2%}")
+vol = volatility_analysis(bars_df)
+print(f"Realized vol (ann): {vol['realized_vol']:.2%}")
+print(f"Vol of vol:         {vol['vol_of_vol']:.4f}")
 ```
 
 ### Tail Risk
@@ -192,18 +200,9 @@ print(f"Parkinson vol:      {vol['parkinson_vol']:.2%}")
 ```python
 from analytics.statistics import tail_risk_analysis
 
-tail = tail_risk_analysis(equity_curve)
-print(f"VaR (95%):  {tail['var_95']:.2%}")
-print(f"CVaR (95%): {tail['cvar_95']:.2%}")
-```
-
-### Regime Detection
-
-```python
-from analytics.regime import regime_detection
-
-regimes = regime_detection(closes, n_regimes=3)
-# Returns regime labels, transition probabilities, regime characteristics
+tail = tail_risk_analysis(bars_df)
+print(f"VaR (95%):  {tail['var_95']:.4f}")
+print(f"CVaR (95%): {tail['cvar_95']:.4f}")
 ```
 
 ### Correlation Analysis
@@ -211,11 +210,14 @@ regimes = regime_detection(closes, n_regimes=3)
 ```python
 from analytics.correlation import correlation_matrix, rolling_correlation
 
-# Static correlation between assets
-corr = correlation_matrix(returns_dict)  # {symbol: returns_array}
+# Static correlation between assets — pass {symbol: DataFrame_with_close}
+corr = correlation_matrix({
+    "BTC/USD": btc_bars_df,
+    "ETH/USD": eth_bars_df,
+})
 
-# Rolling correlation between two assets
-rolling = rolling_correlation(returns_a, returns_b, window=30)
+# Rolling correlation between two assets — pass DataFrames with 'close' column
+rolling = rolling_correlation(btc_bars_df, eth_bars_df, window=30)
 ```
 
 ## Backtesting via Persistra
