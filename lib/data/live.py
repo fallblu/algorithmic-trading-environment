@@ -9,7 +9,8 @@ from datetime import datetime, timezone
 from decimal import Decimal
 
 from data.feed import DataFeed
-from data.kraken_api import TIMEFRAME_MINUTES, fetch_ohlcv
+from constants import TIMEFRAME_MINUTES
+from data.kraken_api import fetch_ohlcv
 from models.bar import Bar
 from models.instrument import Instrument
 
