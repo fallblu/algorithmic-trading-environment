@@ -4,6 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from broker.base import Broker
+from broker.position_manager import PositionManager
 from models.account import Account
 from models.bar import Bar
 from models.fill import Fill
@@ -31,8 +32,6 @@ class SimulatedBroker(Broker):
     ):
         self.fee_rate = fee_rate
         self.slippage_pct = slippage_pct
-        self.margin_mode = margin_mode
-        self.leverage = leverage
         self.spread_pips = spread_pips
 
         self._account = Account(
@@ -42,9 +41,15 @@ class SimulatedBroker(Broker):
         self._quote_currency = quote_currency
         self._orders: dict[str, Order] = {}
         self._open_orders: list[str] = []
-        self._positions: dict[str, Position] = {}  # keyed by instrument symbol
         self._fills: list[Fill] = []
         self._current_time: datetime = datetime.now()
+
+        self._position_mgr = PositionManager(
+            account=self._account,
+            quote_currency=quote_currency,
+            margin_mode=margin_mode,
+            leverage=leverage,
+        )
 
     # -- Broker interface --
 
@@ -73,13 +78,10 @@ class SimulatedBroker(Broker):
         return orders
 
     def get_position(self, instrument: Instrument) -> Position | None:
-        pos = self._positions.get(instrument.symbol)
-        if pos is not None and pos.quantity == 0:
-            return None
-        return pos
+        return self._position_mgr.get_position(instrument.symbol)
 
     def get_positions(self) -> list[Position]:
-        return [p for p in self._positions.values() if p.quantity > 0]
+        return self._position_mgr.get_open_positions()
 
     def get_account(self) -> Account:
         return self._account
@@ -87,6 +89,15 @@ class SimulatedBroker(Broker):
     @property
     def fills(self) -> list[Fill]:
         return list(self._fills)
+
+    # Expose positions dict for backwards compatibility (used by LiveContext)
+    @property
+    def _positions(self) -> dict[str, Position]:
+        return self._position_mgr.positions
+
+    @property
+    def margin_mode(self) -> bool:
+        return self._position_mgr.margin_mode
 
     # -- Simulation engine --
 
@@ -96,7 +107,7 @@ class SimulatedBroker(Broker):
         new_fills: list[Fill] = []
 
         # Update unrealized PnL for existing positions
-        pos = self._positions.get(bar.instrument_symbol)
+        pos = self._position_mgr.positions.get(bar.instrument_symbol)
         if pos is not None and pos.quantity > 0:
             pos.update_unrealized_pnl(bar.close)
 
@@ -138,17 +149,17 @@ class SimulatedBroker(Broker):
         self.update_equity_all(latest_prices)
         return all_fills
 
-    def update_equity_all(self, latest_prices: dict[str, "Decimal"]) -> None:
+    def update_equity_all(self, latest_prices: dict[str, Decimal]) -> None:
         """Update unrealized PnL for all positions and recalculate equity."""
         for symbol, price in latest_prices.items():
-            pos = self._positions.get(symbol)
+            pos = self._position_mgr.positions.get(symbol)
             if pos is not None and pos.quantity > 0:
                 pos.update_unrealized_pnl(price)
 
         cash = self._account.balances.get(self._quote_currency, Decimal("0"))
         unrealized = Decimal("0")
         position_value = Decimal("0")
-        for pos in self._positions.values():
+        for pos in self._position_mgr.positions.values():
             unrealized += pos.unrealized_pnl
             if pos.quantity > 0:
                 position_value += pos.quantity * pos.entry_price + pos.unrealized_pnl
@@ -161,9 +172,7 @@ class SimulatedBroker(Broker):
         fill_price: Decimal | None = None
 
         if order.type == OrderType.MARKET:
-            # Fill at open with slippage
             fill_price = self._apply_slippage(bar.open, order.side)
-
         elif order.type == OrderType.LIMIT:
             if order.price is None:
                 return None
@@ -171,7 +180,6 @@ class SimulatedBroker(Broker):
                 fill_price = order.price
             elif order.side == OrderSide.SELL and bar.high >= order.price:
                 fill_price = order.price
-
         elif order.type == OrderType.STOP:
             if order.stop_price is None:
                 return None
@@ -183,15 +191,12 @@ class SimulatedBroker(Broker):
         if fill_price is None:
             return None
 
-        # Calculate fee
+        # Calculate fee and slippage
         notional = order.quantity * fill_price
         fee = notional * self.fee_rate
-
-        # Calculate slippage from mid price
         mid = (bar.high + bar.low) / 2
         slippage = abs(fill_price - mid)
 
-        # Create fill
         fill = Fill(
             order_id=order.id,
             instrument=order.instrument,
@@ -205,14 +210,14 @@ class SimulatedBroker(Broker):
             slippage=slippage,
         )
 
-        # Update order
+        # Update order status
         order.status = OrderStatus.FILLED
         order.filled_quantity = order.quantity
         order.average_fill_price = fill_price
         order.updated_at = self._current_time
 
-        # Update position and account
-        self._apply_fill(fill)
+        # Delegate position and account updates to PositionManager
+        self._position_mgr.apply_fill(fill)
 
         return fill
 
@@ -220,7 +225,6 @@ class SimulatedBroker(Broker):
         """Apply slippage to a price. For forex, also applies spread."""
         slippage = price * self.slippage_pct
         if self.spread_pips > 0:
-            # Forex spread: buy at ask (mid + half spread), sell at bid (mid - half spread)
             half_spread = self.spread_pips * Decimal("0.0001") / 2
             if side == OrderSide.BUY:
                 return price + half_spread + slippage
@@ -231,119 +235,23 @@ class SimulatedBroker(Broker):
         else:
             return price - slippage
 
-    def _apply_fill(self, fill: Fill) -> None:
-        """Update position and account based on a fill."""
-        symbol = fill.instrument.symbol
-        pos = self._positions.get(symbol)
-
-        if pos is None:
-            # Open new position
-            pos = Position(
-                instrument=fill.instrument,
-                side=fill.side,
-                quantity=fill.quantity,
-                entry_price=fill.price,
-                opened_at=fill.timestamp,
-                last_updated=fill.timestamp,
-            )
-            self._positions[symbol] = pos
-
-            if self.margin_mode:
-                notional = fill.price * fill.quantity
-                margin = notional / self.leverage
-                pos.margin_used = margin
-                self._account.margin_used += margin
-        elif pos.side == fill.side:
-            # Adding to existing position — update VWAP entry
-            total_cost = pos.entry_price * pos.quantity + fill.price * fill.quantity
-            pos.quantity += fill.quantity
-            pos.entry_price = total_cost / pos.quantity
-            pos.last_updated = fill.timestamp
-
-            if self.margin_mode:
-                new_margin = fill.price * fill.quantity / self.leverage
-                pos.margin_used += new_margin
-                self._account.margin_used += new_margin
-        else:
-            # Reducing or reversing position
-            if fill.quantity >= pos.quantity:
-                closed_qty = pos.quantity
-                if pos.side == OrderSide.BUY:
-                    pnl = (fill.price - pos.entry_price) * closed_qty
-                else:
-                    pnl = (pos.entry_price - fill.price) * closed_qty
-                pos.realized_pnl += pnl
-                self._account.realized_pnl += pnl
-
-                if self.margin_mode:
-                    self._account.margin_used -= pos.margin_used
-                    pos.margin_used = Decimal("0")
-
-                remaining = fill.quantity - closed_qty
-                if remaining > 0:
-                    pos.side = fill.side
-                    pos.quantity = remaining
-                    pos.entry_price = fill.price
-                    pos.unrealized_pnl = Decimal("0")
-
-                    if self.margin_mode:
-                        margin = fill.price * remaining / self.leverage
-                        pos.margin_used = margin
-                        self._account.margin_used += margin
-                else:
-                    pos.quantity = Decimal("0")
-                    pos.unrealized_pnl = Decimal("0")
-                pos.last_updated = fill.timestamp
-            else:
-                if pos.side == OrderSide.BUY:
-                    pnl = (fill.price - pos.entry_price) * fill.quantity
-                else:
-                    pnl = (pos.entry_price - fill.price) * fill.quantity
-                pos.realized_pnl += pnl
-                self._account.realized_pnl += pnl
-
-                if self.margin_mode:
-                    margin_released = pos.margin_used * fill.quantity / pos.quantity
-                    pos.margin_used -= margin_released
-                    self._account.margin_used -= margin_released
-
-                pos.quantity -= fill.quantity
-                pos.last_updated = fill.timestamp
-
-        # Deduct fees from cash
-        self._account.balances[self._quote_currency] -= fill.fee
-
-        if self.margin_mode:
-            # In margin mode, cash is not reduced by full notional — only margin is required
-            # PnL is realized/unrealized on the full notional
-            pass
-        else:
-            # Spot: update cash for the trade
-            notional = fill.price * fill.quantity
-            if fill.side == OrderSide.BUY:
-                self._account.balances[self._quote_currency] -= notional
-            else:
-                self._account.balances[self._quote_currency] += notional
-
     def _update_equity(self, bar: Bar) -> None:
         """Recalculate account equity after processing a bar."""
         cash = self._account.balances.get(self._quote_currency, Decimal("0"))
         unrealized = Decimal("0")
-        for pos in self._positions.values():
+        for pos in self._position_mgr.positions.values():
             if pos.quantity > 0 and pos.instrument.symbol == bar.instrument_symbol:
                 pos.update_unrealized_pnl(bar.close)
             unrealized += pos.unrealized_pnl
 
         self._account.unrealized_pnl = unrealized
 
-        if self.margin_mode:
-            # For leveraged instruments: equity = cash + unrealized PnL
+        if self._position_mgr.margin_mode:
             self._account.equity = cash + unrealized
             self._account.margin_available = self._account.equity - self._account.margin_used
         else:
-            # For spot: equity = cash + sum(position_value)
             position_value = Decimal("0")
-            for pos in self._positions.values():
+            for pos in self._position_mgr.positions.values():
                 if pos.quantity > 0:
                     position_value += pos.quantity * pos.entry_price + pos.unrealized_pnl
             self._account.equity = cash + position_value

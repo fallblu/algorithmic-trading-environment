@@ -8,34 +8,20 @@ from decimal import Decimal
 
 import requests
 
+from constants import OANDA_GRANULARITY_MAP as GRANULARITY_MAP, normalize_symbol, denormalize_symbol
+from exceptions import OandaAPIError
 from models.bar import Bar
 
 log = logging.getLogger(__name__)
 
-# Granularity mapping: our format -> OANDA format
-GRANULARITY_MAP = {
-    "1m": "M1",
-    "5m": "M5",
-    "15m": "M15",
-    "30m": "M30",
-    "1h": "H1",
-    "4h": "H4",
-    "1d": "D",
-    "1w": "W",
-}
 
-# Symbol format: our format -> OANDA format
 def _to_oanda_symbol(symbol: str) -> str:
     """Convert 'EUR/USD' to 'EUR_USD'."""
-    return symbol.replace("/", "_")
+    return normalize_symbol(symbol)
 
 def _from_oanda_symbol(oanda_symbol: str) -> str:
     """Convert 'EUR_USD' to 'EUR/USD'."""
-    return oanda_symbol.replace("_", "/")
-
-
-class OandaAPIError(Exception):
-    pass
+    return denormalize_symbol(oanda_symbol)
 
 
 def _get_base_url() -> str:

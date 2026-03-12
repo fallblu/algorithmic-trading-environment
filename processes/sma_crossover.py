@@ -37,7 +37,8 @@ def run(
     from execution.backtest import BacktestContext
     from strategy.sma_crossover import SmaCrossover
 
-    from helpers import market_data_dir, parse_symbols, periods_per_year, require_data
+    from constants import periods_per_year
+    from helpers import market_data_dir, parse_symbols, require_data
 
     symbol_list = parse_symbols(symbols)
     require_data(env.path, "kraken", symbol_list, timeframe)

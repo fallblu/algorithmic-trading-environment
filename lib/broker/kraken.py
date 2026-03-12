@@ -6,7 +6,8 @@ from decimal import Decimal
 
 from broker.base import Broker
 from data.universe import get_kraken_specs, resolve_kraken_symbol
-from data.kraken_auth import KrakenAuthError, private_request
+from data.kraken_auth import private_request
+from exceptions import KrakenAuthError  # noqa: F401
 from models.account import Account
 from models.instrument import Instrument
 from models.order import Order, OrderSide, OrderStatus, OrderType

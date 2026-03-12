@@ -12,8 +12,7 @@ import requests
 KRAKEN_API_URL = "https://api.kraken.com"
 
 
-class KrakenAuthError(Exception):
-    pass
+from exceptions import KrakenAuthError
 
 
 def get_credentials() -> tuple[str, str]:

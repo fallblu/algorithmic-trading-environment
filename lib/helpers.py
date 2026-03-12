@@ -32,18 +32,4 @@ def require_data(env_path, exchange: str, symbols: list[str], timeframe: str):
         )
 
 
-TIMEFRAME_PERIODS_PER_YEAR = {
-    "1m": 525960,
-    "5m": 105192,
-    "15m": 35064,
-    "30m": 17532,
-    "1h": 8766,
-    "4h": 2191.5,
-    "1d": 365.25,
-    "1w": 52.18,
-}
-
-
-def periods_per_year(timeframe: str) -> float:
-    """Return annualization factor for the given bar timeframe."""
-    return TIMEFRAME_PERIODS_PER_YEAR.get(timeframe, 8766)
+from constants import TIMEFRAME_PERIODS_PER_YEAR, periods_per_year  # noqa: F401

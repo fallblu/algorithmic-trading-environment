@@ -6,27 +6,13 @@ from decimal import Decimal
 
 import requests
 
+from constants import TIMEFRAME_MINUTES
+from exceptions import KrakenAPIError
 from models.bar import Bar
-
-# Kraken OHLC interval mapping (minutes)
-TIMEFRAME_MINUTES = {
-    "1m": 1,
-    "5m": 5,
-    "15m": 15,
-    "30m": 30,
-    "1h": 60,
-    "4h": 240,
-    "1d": 1440,
-    "1w": 10080,
-}
 
 from data.universe import resolve_kraken_symbol
 
 BASE_URL = "https://api.kraken.com/0/public"
-
-
-class KrakenAPIError(Exception):
-    pass
 
 
 def fetch_ohlcv(

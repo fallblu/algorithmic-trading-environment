@@ -1,14 +1,11 @@
 """LiveContext — real market data with real broker execution, multi-symbol support."""
 
 import logging
-from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from decimal import Decimal
 
-from broker.base import Broker
-from data.price_panel import PricePanel
 from data.universe import Universe
-from execution.context import ExecutionContext
+from execution.realtime import RealtimeContext, _detect_exchange, create_live_feed, create_live_broker
 from models.order import OrderStatus
 from risk.manager import RiskManager
 from strategy.base import Strategy
@@ -16,27 +13,7 @@ from strategy.base import Strategy
 log = logging.getLogger(__name__)
 
 
-def _create_live_feed(exchange: str):
-    """Create the appropriate live feed for the given exchange."""
-    if exchange == "oanda":
-        from data.live_oanda import LiveOandaFeed
-        return LiveOandaFeed()
-    else:
-        from data.live import LiveFeed
-        return LiveFeed()
-
-
-def _create_live_broker(exchange: str) -> Broker:
-    """Create the appropriate broker for the given exchange."""
-    if exchange == "oanda":
-        from broker.oanda import OandaBroker
-        return OandaBroker()
-    else:
-        from broker.kraken import KrakenBroker
-        return KrakenBroker()
-
-
-class LiveContext(ExecutionContext):
+class LiveContext(RealtimeContext):
     """Live trading: real market data with real broker execution.
 
     Supports spot (Kraken) and forex (OANDA) via exchange auto-detection
@@ -57,124 +34,46 @@ class LiveContext(ExecutionContext):
         exchange: str | None = None,
     ):
         self._universe = universe
+        self._exchange = exchange if exchange else _detect_exchange(universe)
 
-        # Auto-detect exchange from universe
-        if exchange is None:
-            first_inst = next(iter(universe.instruments.values()), None)
-            exchange = first_inst.exchange if first_inst else "kraken"
-        self._exchange = exchange
-
-        self._feed = _create_live_feed(exchange)
-        self._broker = _create_live_broker(exchange)
+        self._feed = create_live_feed(self._exchange)
+        self._broker = create_live_broker(self._exchange)
         self._risk_manager = RiskManager(
             max_position_size=max_position_size,
             max_order_value=max_order_value,
             daily_loss_limit=daily_loss_limit,
         )
         self._current_time = datetime.now(timezone.utc)
-        self._panel: PricePanel | None = None
+        self._panel = None
 
-    def get_universe(self) -> Universe:
-        return self._universe
+    def _process_fills(self, group: list, strategy: Strategy) -> list:
+        """Check order statuses from exchange (no simulated fills in live mode)."""
+        for order in list(self._broker._orders.values()):
+            if order.status == OrderStatus.OPEN:
+                try:
+                    self._broker.get_order(order.id)
+                except Exception:
+                    log.exception("Failed to query order status: %s", order.id)
+        return []
 
-    def get_broker(self) -> Broker:
-        return self._broker
+    def _submit_order(self, order, strategy: Strategy) -> None:
+        """Submit order to live exchange broker with error handling."""
+        try:
+            self._broker.submit_order(order)
+            log.info("LIVE order submitted: %s %s %s qty=%s",
+                     order.side.value, order.type.value,
+                     order.instrument.symbol, order.quantity)
+        except Exception:
+            log.exception("Failed to submit order: %s", order.id)
 
-    def get_risk_manager(self) -> RiskManager:
-        return self._risk_manager
+    def _empty_result(self) -> dict:
+        return {
+            "bars_processed": 0,
+            "account": self._broker.get_account().to_dict(),
+        }
 
-    def current_time(self) -> datetime:
-        return self._current_time
-
-    def subscribe_all(self, timeframe: str) -> None:
-        instruments = list(self._universe.instruments.values())
-        self._feed.subscribe_all(instruments, timeframe)
-
-    def warmup(
-        self,
-        strategy: Strategy,
-        timeframe: str,
-        warmup_bars: int = 50,
-    ) -> None:
-        """Feed historical bars for all symbols to warm up indicators."""
-        self._panel = PricePanel(self._universe, lookback=strategy.lookback())
-
-        end = datetime.now(timezone.utc)
-        tf_minutes = {"1m": 1, "5m": 5, "15m": 15, "30m": 30,
-                      "1h": 60, "4h": 240, "1d": 1440}
-        minutes = tf_minutes.get(timeframe, 60)
-        start = end - timedelta(minutes=int(minutes * warmup_bars * 1.2))
-
-        all_bars = []
-        for instrument in self._universe.instruments.values():
-            bars = self._feed.historical_bars(instrument, timeframe, start, end)
-            all_bars.extend(bars[-warmup_bars:])
-
-        all_bars.sort(key=lambda b: b.timestamp)
-        groups: dict[datetime, list] = defaultdict(list)
-        for bar in all_bars:
-            groups[bar.timestamp].append(bar)
-
-        log.info("Warming up strategy with %d bar groups across %d symbols",
-                 len(groups), len(self._universe.symbols))
-
-        for ts in sorted(groups.keys()):
-            self._panel.append_bars(groups[ts])
-            if self._panel.is_ready:
-                strategy.on_bar(self._panel.get_window())
-
-    def run_once(self, strategy: Strategy) -> dict:
-        """Process bars and execute real orders against Kraken."""
-        if self._panel is None:
-            self._panel = PricePanel(self._universe, lookback=strategy.lookback())
-
-        bars = self._feed.next_bars()
-        if not bars:
-            return {"bars_processed": 0, "account": self._broker.get_account().to_dict()}
-
-        bars.sort(key=lambda b: b.timestamp)
-        groups: dict[datetime, list] = defaultdict(list)
-        for bar in bars:
-            groups[bar.timestamp].append(bar)
-
-        bars_processed = 0
-
-        for ts in sorted(groups.keys()):
-            group = groups[ts]
-            self._current_time = ts
-
-            # Check order statuses from exchange
-            for order in list(self._broker._orders.values()):
-                if order.status == OrderStatus.OPEN:
-                    try:
-                        self._broker.get_order(order.id)
-                    except Exception:
-                        log.exception("Failed to query order status: %s", order.id)
-
-            # Append to panel and call strategy
-            self._panel.append_bars(group)
-            if self._panel.is_ready:
-                orders = strategy.on_bar(self._panel.get_window())
-
-                # Risk check + submit
-                for order in orders:
-                    if self._risk_manager.check(order, self._broker):
-                        try:
-                            self._broker.submit_order(order)
-                            log.info("LIVE order submitted: %s %s %s qty=%s",
-                                     order.side.value, order.type.value,
-                                     order.instrument.symbol, order.quantity)
-                        except Exception:
-                            log.exception("Failed to submit order to Kraken: %s", order.id)
-                    else:
-                        log.warning("Order rejected by risk manager: %s", order.id)
-
-            bars_processed += 1
-
+    def _build_result(self, bars_processed: int, fills: list) -> dict:
         return {
             "bars_processed": bars_processed,
             "account": self._broker.get_account().to_dict(),
         }
-
-    def shutdown(self) -> None:
-        self._feed.shutdown()

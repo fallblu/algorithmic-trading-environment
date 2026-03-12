@@ -6,6 +6,7 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from constants import normalize_symbol
 from models.bar import Bar
 
 
@@ -30,7 +31,7 @@ class MarketDataStore:
         self.base_dir = base_dir
 
     def _path_for(self, exchange: str, symbol: str, timeframe: str) -> Path:
-        safe_symbol = symbol.replace("/", "_")
+        safe_symbol = normalize_symbol(symbol)
         return self.base_dir / exchange / safe_symbol / f"{timeframe}.parquet"
 
     def write_bars(self, bars: list[Bar], exchange: str, timeframe: str) -> None:
