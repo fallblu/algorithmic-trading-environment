@@ -4,7 +4,7 @@ import os
 from dataclasses import dataclass, field
 from decimal import Decimal
 
-from exceptions import ConfigError  # noqa: F401 — re-exported for backwards compat
+from exceptions import ConfigError
 
 
 # -- Typed configuration dataclasses --

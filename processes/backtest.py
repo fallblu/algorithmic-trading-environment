@@ -1,8 +1,13 @@
-"""SMA Crossover strategy process — backtest mode (job).
+"""Backtest process — run any registered strategy in backtest mode (job).
 
-For paper/live trading, use sma_crossover_live instead.
+For paper/live trading, use live_trader instead.
+
+Usage:
+    persistra process run backtest -p strategy=sma_crossover -p symbols=BTC/USD
+    persistra process run backtest -p strategy=macd_trend -p params='{"fast_period":12}'
 """
 
+import json
 import logging
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -16,57 +21,68 @@ log = logging.getLogger(__name__)
 @process("job")
 def run(
     env,
+    strategy: str = "sma_crossover",
     symbols: str = "BTC/USD",
     timeframe: str = "1h",
-    fast_period: int = 10,
-    slow_period: int = 30,
-    quantity: str = "0.01",
+    exchange: str = "kraken",
+    params: str = "{}",
     initial_cash: str = "10000",
-    fee_rate: str = "0.0026",
-    slippage_pct: str = "0.0001",
     max_position_size: str = "1.0",
     start: str = "",
     end: str = "",
 ):
-    """Run the SMA crossover strategy in backtest mode."""
+    """Run a registered strategy in backtest mode.
+
+    Args:
+        strategy: Registered strategy name (e.g. sma_crossover, macd_trend).
+        symbols: Comma-separated symbol list.
+        timeframe: Bar timeframe.
+        exchange: Exchange name for config defaults and data.
+        params: JSON string of strategy-specific parameters.
+        initial_cash: Starting equity.
+        max_position_size: Max position size as fraction of equity.
+        start: Start date ISO format.
+        end: End date ISO format.
+    """
     import pandas as pd
 
     from analytics.performance import compute_performance
+    from config import get_exchange_config
+    from constants import periods_per_year
     from data.state_parquet import ParquetStateStore
     from data.universe import Universe
     from execution.backtest import BacktestContext
-    from strategy.sma_crossover import SmaCrossover
-
-    from constants import periods_per_year
     from helpers import market_data_dir, parse_symbols, require_data
+    from strategy.registry import get_strategy, load_all_strategies
 
+    load_all_strategies()
+
+    strategy_class = get_strategy(strategy)
     symbol_list = parse_symbols(symbols)
-    require_data(env.path, "kraken", symbol_list, timeframe)
+    require_data(env.path, exchange, symbol_list, timeframe)
     universe = Universe.from_symbols(symbol_list, timeframe)
+
+    exchange_config = get_exchange_config(exchange)
 
     start_dt = datetime.fromisoformat(start) if start else datetime(2024, 1, 1, tzinfo=timezone.utc)
     end_dt = datetime.fromisoformat(end) if end else datetime.now(timezone.utc)
 
-    strategy_params = {
-        "fast_period": fast_period,
-        "slow_period": slow_period,
-        "quantity": quantity,
-        "symbols": symbol_list,
-    }
+    strategy_params = json.loads(params)
+    strategy_params.setdefault("symbols", symbol_list)
 
     ctx = BacktestContext(
         universe=universe,
         start=start_dt,
         end=end_dt,
         initial_cash=Decimal(initial_cash),
-        fee_rate=Decimal(fee_rate),
-        slippage_pct=Decimal(slippage_pct),
+        fee_rate=exchange_config.fee_rate,
+        slippage_pct=exchange_config.slippage_pct,
         max_position_size=Decimal(max_position_size),
         data_dir=market_data_dir(env.path),
     )
 
-    strategy = SmaCrossover(ctx, strategy_params)
-    results = ctx.run(strategy)
+    strat = strategy_class(ctx, strategy_params)
+    results = ctx.run(strat)
 
     metrics = compute_performance(
         equity_curve=results["equity_curve"],
@@ -109,17 +125,13 @@ def run(
     ns.set("fills_path", fills_path)
     ns.set("universe", symbols)
 
-    strat_ns = env.state.ns("strategy.sma_crossover")
-    strat_ns.set("params", {
-        "fast_period": fast_period,
-        "slow_period": slow_period,
-        "quantity": quantity,
-        "symbols": symbols,
-        "timeframe": timeframe,
-    })
+    strat_ns = env.state.ns("strategy")
+    strat_ns.set("name", strategy)
+    strat_ns.set("params", strategy_params)
     strat_ns.set("metrics", metrics)
 
     log.info("=== Backtest Results ===")
+    log.info("Strategy: %s", strategy)
     log.info("Universe: %s", symbols)
     log.info("Total Return: %.2f%%", metrics["total_return"] * 100)
     log.info("Sharpe Ratio: %.4f", metrics["sharpe_ratio"])

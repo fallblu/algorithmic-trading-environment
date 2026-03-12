@@ -22,6 +22,7 @@ def run(
     Accepts comma-separated symbols (e.g. "BTC/USD,ETH/USD").
     Supports exchanges: kraken, oanda.
     """
+    from constants import normalize_symbol
     from data.store import MarketDataStore
     from helpers import parse_symbols, market_data_dir
 
@@ -71,6 +72,6 @@ def run(
 
             ns = env.state.ns("data")
             ns.set("last_update", datetime.now(timezone.utc).isoformat())
-            ns.set(f"{symbol.replace('/', '_')}_{timeframe}_bars", len(bars))
+            ns.set(f"{normalize_symbol(symbol)}_{timeframe}_bars", len(bars))
         else:
             log.info("No new bars fetched for %s %s", symbol, timeframe)

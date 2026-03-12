@@ -30,6 +30,3 @@ def require_data(env_path, exchange: str, symbols: list[str], timeframe: str):
             f"Run: persistra process run data_ingestor "
             f"-p symbols={syms} -p timeframe={timeframe} -p exchange={exchange}"
         )
-
-
-from constants import TIMEFRAME_PERIODS_PER_YEAR, periods_per_year  # noqa: F401

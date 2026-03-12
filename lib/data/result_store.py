@@ -6,7 +6,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
-import pyarrow.parquet as pq
 
 
 class ResultStore:

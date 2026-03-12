@@ -29,7 +29,7 @@ def build(env) -> Workflow:
         if not eq_path:
             raise RuntimeError(
                 "No backtest equity curve found. "
-                "Run: persistra process run sma_crossover -p symbols=BTC/USD first."
+                "Run: persistra process run backtest -p symbols=BTC/USD first."
             )
 
         pq_store = ParquetStateStore(Path(env.path) / ".persistra")
@@ -61,9 +61,8 @@ def build(env) -> Workflow:
         results = run_stress_test(backtest_results, config)
 
         base_dir = Path(env.path) / ".persistra"
-        strategy_name = env.state.ns("strategy.sma_crossover").get(
-            "params", {}
-        ).get("strategy", "sma_crossover")
+        strategy_ns = env.state.ns("strategy")
+        strategy_name = strategy_ns.get("name", "sma_crossover")
         result_dir = save_stress_test_results(results, base_dir, strategy_name)
 
         ns = env.state.ns("stress_test")
