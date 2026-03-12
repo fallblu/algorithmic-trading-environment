@@ -27,7 +27,10 @@ def log_returns(closes: np.ndarray, period: int = 1) -> np.ndarray:
     """
     if len(closes) < period + 1:
         return np.array([])
-    returns = np.diff(np.log(closes[::period]))
+    if period == 1:
+        returns = np.diff(np.log(closes))
+    else:
+        returns = np.log(closes[period:]) - np.log(closes[:-period])
     return returns[np.isfinite(returns)]
 
 

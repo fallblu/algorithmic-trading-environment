@@ -136,3 +136,96 @@ class TestResetDaily:
         order = Order(instrument=btc_instrument, side=OrderSide.BUY,
                       type=OrderType.MARKET, quantity=Decimal("0.1"))
         assert rm.check(order, broker) is True
+
+
+class TestRiskConfig:
+    def test_construct_from_risk_config(self, btc_instrument, broker):
+        from config import RiskConfig
+        config = RiskConfig(
+            max_position_size=Decimal("2.0"),
+            max_order_value=Decimal("50000"),
+            daily_loss_limit=Decimal("-200"),
+            max_drawdown_limit=Decimal("0.10"),
+            max_concentration_pct=Decimal("0.30"),
+        )
+        rm = RiskManager(risk_config=config)
+        assert rm.max_position_size == Decimal("2.0")
+        assert rm.max_order_value == Decimal("50000")
+        assert rm.daily_loss_limit == Decimal("-200")
+        assert rm.max_drawdown_limit == Decimal("0.10")
+
+        # Should accept orders within the config limits
+        order = Order(instrument=btc_instrument, side=OrderSide.BUY,
+                      type=OrderType.MARKET, quantity=Decimal("1.5"))
+        assert rm.check(order, broker) is True
+
+    def test_risk_config_overrides_individual_params(self, btc_instrument, broker):
+        from config import RiskConfig
+        config = RiskConfig(max_position_size=Decimal("0.5"))
+        rm = RiskManager(max_position_size=Decimal("100"), risk_config=config)
+        # risk_config should win
+        assert rm.max_position_size == Decimal("0.5")
+
+        order = Order(instrument=btc_instrument, side=OrderSide.BUY,
+                      type=OrderType.MARKET, quantity=Decimal("1.0"))
+        assert rm.check(order, broker) is False
+
+
+class TestDrawdown:
+    def test_drawdown_rejects_when_exceeded(self, btc_instrument):
+        broker = SimulatedBroker(
+            initial_cash=Decimal("100000"),
+            fee_rate=Decimal("0"),
+            slippage_pct=Decimal("0"),
+        )
+        rm = RiskManager(
+            max_position_size=Decimal("10"),
+            max_drawdown_limit=Decimal("0.05"),  # 5% max drawdown
+        )
+        # Set HWM to 100000
+        rm.update_high_water_mark(Decimal("100000"))
+
+        # Simulate equity drop to 94000 (6% drawdown > 5% limit)
+        # We need to manipulate the broker's account equity
+        broker._account.equity = Decimal("94000")
+
+        order = Order(instrument=btc_instrument, side=OrderSide.BUY,
+                      type=OrderType.MARKET, quantity=Decimal("0.1"))
+        results = rm.check_all(order, broker)
+        dd_checks = [r for r in results if r.check_name == "drawdown"]
+        assert len(dd_checks) == 1
+        assert not dd_checks[0].passed
+
+    def test_drawdown_passes_within_limit(self, btc_instrument):
+        broker = SimulatedBroker(
+            initial_cash=Decimal("100000"),
+            fee_rate=Decimal("0"),
+            slippage_pct=Decimal("0"),
+        )
+        rm = RiskManager(
+            max_position_size=Decimal("10"),
+            max_drawdown_limit=Decimal("0.10"),  # 10% max drawdown
+        )
+        rm.update_high_water_mark(Decimal("100000"))
+
+        # 3% drawdown — within limit
+        broker._account.equity = Decimal("97000")
+
+        order = Order(instrument=btc_instrument, side=OrderSide.BUY,
+                      type=OrderType.MARKET, quantity=Decimal("0.1"))
+        results = rm.check_all(order, broker)
+        dd_checks = [r for r in results if r.check_name == "drawdown"]
+        assert len(dd_checks) == 1
+        assert dd_checks[0].passed
+
+    def test_drawdown_auto_updates_hwm(self, btc_instrument, broker):
+        rm = RiskManager(
+            max_position_size=Decimal("10"),
+            max_drawdown_limit=Decimal("0.10"),
+        )
+        # With initial equity of 100000 and no HWM set (starts at 0),
+        # the first check should update HWM to current equity
+        order = Order(instrument=btc_instrument, side=OrderSide.BUY,
+                      type=OrderType.MARKET, quantity=Decimal("0.1"))
+        rm.check_all(order, broker)
+        assert rm._high_water_mark == Decimal("100000")

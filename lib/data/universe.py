@@ -74,19 +74,34 @@ class Universe:
         timeframe: str,
         exchange: str = "kraken",
     ) -> "Universe":
-        """Build a Universe from a list of symbol strings like 'BTC/USD'."""
+        """Build a Universe from a list of symbol strings like 'BTC/USD'.
+
+        Infers asset_class from the exchange: 'oanda' maps to 'forex',
+        otherwise defaults to 'crypto'.  For forex exchanges, OANDA-specific
+        tick/lot specs are used when available.
+        """
+        is_forex = exchange.lower() == "oanda"
+        asset_class = "forex" if is_forex else "crypto"
+
         instruments: dict[str, Instrument] = {}
         for symbol in symbols:
             parts = symbol.split("/")
             base = parts[0]
             quote = parts[1] if len(parts) > 1 else "USD"
-            specs = _KRAKEN_DEFAULTS.get(base, _DEFAULT_SPECS)
+
+            if is_forex:
+                specs = _OANDA_DEFAULTS.get(symbol, {
+                    "tick_size": "0.00001", "lot_size": "1", "min_notional": "1",
+                })
+            else:
+                specs = _KRAKEN_DEFAULTS.get(base, _DEFAULT_SPECS)
+
             instruments[symbol] = Instrument(
                 symbol=symbol,
                 base=base,
                 quote=quote,
                 exchange=exchange,
-                asset_class="crypto",
+                asset_class=asset_class,
                 tick_size=Decimal(specs["tick_size"]),
                 lot_size=Decimal(specs["lot_size"]),
                 min_notional=Decimal(specs["min_notional"]),

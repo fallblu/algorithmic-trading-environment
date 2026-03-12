@@ -260,7 +260,7 @@ class PortfolioRebalance(Strategy):
                     quantity=abs(diff),
                     strategy_id="portfolio_rebalance",
                 ))
-                log.info("REBAL BUY %s: qty=%s (target_weight=%.2%%)",
+                log.info("REBAL BUY %s: qty=%s (target_weight=%.2f%%)",
                          symbol, abs(diff), target_weight * 100)
             elif diff < 0:
                 sell_qty = min(abs(diff), current_qty)
@@ -272,7 +272,7 @@ class PortfolioRebalance(Strategy):
                         quantity=sell_qty,
                         strategy_id="portfolio_rebalance",
                     ))
-                    log.info("REBAL SELL %s: qty=%s (target_weight=%.2%%)",
+                    log.info("REBAL SELL %s: qty=%s (target_weight=%.2f%%)",
                              symbol, sell_qty, target_weight * 100)
 
         return orders

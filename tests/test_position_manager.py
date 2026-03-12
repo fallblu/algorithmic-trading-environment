@@ -118,6 +118,108 @@ class TestReducePosition:
         assert pos.realized_pnl > Decimal("0")
 
 
+class TestMarginMode:
+    def test_open_position_uses_margin(self, btc_instrument):
+        account = Account(
+            balances={"USD": Decimal("100000")},
+            equity=Decimal("100000"),
+            margin_available=Decimal("100000"),
+        )
+        pm = PositionManager(account, margin_mode=True, leverage=Decimal("10"))
+
+        fill = Fill(
+            order_id="1", instrument=btc_instrument, side=OrderSide.BUY,
+            quantity=Decimal("1"), price=Decimal("50000"),
+            fee=Decimal("50"), fee_currency="USD",
+            timestamp=datetime.now(timezone.utc),
+        )
+        pm.apply_fill(fill)
+
+        pos = pm.get_position("BTC/USD")
+        assert pos is not None
+        # Margin = notional / leverage = 50000 / 10 = 5000
+        assert pos.margin_used == Decimal("5000")
+        assert account.margin_used == Decimal("5000")
+
+    def test_add_to_position_adds_margin(self, btc_instrument):
+        account = Account(
+            balances={"USD": Decimal("100000")},
+            equity=Decimal("100000"),
+            margin_available=Decimal("100000"),
+        )
+        pm = PositionManager(account, margin_mode=True, leverage=Decimal("10"))
+
+        fill1 = Fill(
+            order_id="1", instrument=btc_instrument, side=OrderSide.BUY,
+            quantity=Decimal("1"), price=Decimal("50000"),
+            fee=Decimal("0"), fee_currency="USD",
+            timestamp=datetime.now(timezone.utc),
+        )
+        pm.apply_fill(fill1)
+
+        fill2 = Fill(
+            order_id="2", instrument=btc_instrument, side=OrderSide.BUY,
+            quantity=Decimal("1"), price=Decimal("60000"),
+            fee=Decimal("0"), fee_currency="USD",
+            timestamp=datetime.now(timezone.utc),
+        )
+        pm.apply_fill(fill2)
+
+        pos = pm.get_position("BTC/USD")
+        # Margin = 5000 + 6000 = 11000
+        assert pos.margin_used == Decimal("11000")
+        assert account.margin_used == Decimal("11000")
+
+    def test_close_position_releases_margin(self, btc_instrument):
+        account = Account(
+            balances={"USD": Decimal("100000")},
+            equity=Decimal("100000"),
+            margin_available=Decimal("100000"),
+        )
+        pm = PositionManager(account, margin_mode=True, leverage=Decimal("10"))
+
+        pm.apply_fill(Fill(
+            order_id="1", instrument=btc_instrument, side=OrderSide.BUY,
+            quantity=Decimal("1"), price=Decimal("50000"),
+            fee=Decimal("0"), fee_currency="USD",
+            timestamp=datetime.now(timezone.utc),
+        ))
+
+        pm.apply_fill(Fill(
+            order_id="2", instrument=btc_instrument, side=OrderSide.SELL,
+            quantity=Decimal("1"), price=Decimal("52000"),
+            fee=Decimal("0"), fee_currency="USD",
+            timestamp=datetime.now(timezone.utc),
+        ))
+
+        assert account.margin_used == Decimal("0")
+
+    def test_partial_close_releases_proportional_margin(self, btc_instrument):
+        account = Account(
+            balances={"USD": Decimal("100000")},
+            equity=Decimal("100000"),
+            margin_available=Decimal("100000"),
+        )
+        pm = PositionManager(account, margin_mode=True, leverage=Decimal("10"))
+
+        pm.apply_fill(Fill(
+            order_id="1", instrument=btc_instrument, side=OrderSide.BUY,
+            quantity=Decimal("2"), price=Decimal("50000"),
+            fee=Decimal("0"), fee_currency="USD",
+            timestamp=datetime.now(timezone.utc),
+        ))
+        # Margin = 100000 / 10 = 10000
+
+        pm.apply_fill(Fill(
+            order_id="2", instrument=btc_instrument, side=OrderSide.SELL,
+            quantity=Decimal("1"), price=Decimal("52000"),
+            fee=Decimal("0"), fee_currency="USD",
+            timestamp=datetime.now(timezone.utc),
+        ))
+        # Released half the margin: 10000 * (1/2) = 5000
+        assert account.margin_used == Decimal("5000")
+
+
 class TestClosePosition:
     def test_full_close_long(self, btc_instrument):
         account = Account(
