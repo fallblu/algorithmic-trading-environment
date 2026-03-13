@@ -41,6 +41,9 @@ def run(
         log.error("uvicorn not installed. Install with: pip install uvicorn")
         return
 
+    # The runner registers this file as sys.modules["dashboard"], which shadows
+    # the lib/dashboard package. Remove it so the package import resolves correctly.
+    sys.modules.pop("dashboard", None)
     from dashboard.app import create_app
     from helpers import market_data_dir
 

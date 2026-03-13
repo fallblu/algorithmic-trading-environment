@@ -1,9 +1,14 @@
 """Data analysis workflow — statistical analysis and technical scanning."""
 
 import logging
+import sys
 from pathlib import Path
 
 from persistra import Workflow
+
+_workflows_dir = str(Path(__file__).parent)
+if _workflows_dir not in sys.path:
+    sys.path.insert(0, _workflows_dir)
 
 from _common import ensure_lib_path
 
