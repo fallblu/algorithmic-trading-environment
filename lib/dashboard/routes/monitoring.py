@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
 
 from portfolio.storage import PortfolioStorage
@@ -18,7 +18,7 @@ router = APIRouter()
 # ---------------------------------------------------------------------------
 
 @router.get("/")
-async def monitoring_page(request: Request):
+async def monitoring_page(request: Request, portfolio: str = Query(default="")):
     templates = request.app.state.templates
     state = request.app.state.app_state
     storage = PortfolioStorage(state)
@@ -27,9 +27,22 @@ async def monitoring_page(request: Request):
     except Exception:
         log.exception("Failed to list portfolios for monitoring page")
         portfolios = []
+
+    metrics: dict = {}
+    if portfolio:
+        bt_results: dict = state.get("backtest_results", {})
+        job = bt_results.get(portfolio)
+        if job and job.get("result"):
+            metrics = job["result"].get("metrics", {})
+
     return templates.TemplateResponse(
         "monitoring.html",
-        {"request": request, "portfolios": portfolios},
+        {
+            "request": request,
+            "portfolios": portfolios,
+            "selected_portfolio": portfolio,
+            "metrics": metrics,
+        },
     )
 
 

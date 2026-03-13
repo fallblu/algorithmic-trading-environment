@@ -50,15 +50,10 @@
                         <option value="oanda">Oanda</option>
                     </select>
                 </div>
-                <div>
-                    <label class="block text-sm text-gray-400 mb-1">Strategy</label>
-                    <select name="strategy"
-                            class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-gray-200 text-sm focus:outline-none focus:border-blue-500">
-                        {% for strategy in strategies %}
-                            <option value="{{ strategy }}">{{ strategy }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
+                <p class="text-xs text-gray-500">
+                    New portfolios start in <span class="text-gray-300">Backtest</span> mode.
+                    Add strategies after creation, then promote to Paper or Live when ready.
+                </p>
             </div>
             <div class="flex justify-end space-x-3 mt-6">
                 <button type="button"

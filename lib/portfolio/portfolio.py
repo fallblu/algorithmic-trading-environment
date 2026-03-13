@@ -32,6 +32,16 @@ class StrategyAllocation:
 
 
 @dataclass
+class OrchestrationProfile:
+    """A named orchestration profile with code and params."""
+
+    id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    name: str = "Default"
+    code: str = ""
+    params: dict = field(default_factory=dict)
+
+
+@dataclass
 class Portfolio:
     """A portfolio of strategies with shared risk rules and capital."""
 
@@ -43,6 +53,9 @@ class Portfolio:
     initial_cash: float = 10_000.0
     orchestration_code: str | None = None
     """manage_portfolio() source code, or None for default pass-through."""
+    orchestration_params: dict = field(default_factory=dict)
+    orchestration_profiles: list[OrchestrationProfile] = field(default_factory=list)
+    active_orchestration: str | None = None
     exchange: str = "kraken"
     profile: str = "default"
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
@@ -75,6 +88,12 @@ class Portfolio:
             },
             "initial_cash": self.initial_cash,
             "orchestration_code": self.orchestration_code,
+            "orchestration_params": self.orchestration_params,
+            "orchestration_profiles": [
+                {"id": p.id, "name": p.name, "code": p.code, "params": p.params}
+                for p in self.orchestration_profiles
+            ],
+            "active_orchestration": self.active_orchestration,
             "exchange": self.exchange,
             "profile": self.profile,
             "created_at": self.created_at.isoformat(),
@@ -104,6 +123,32 @@ class Portfolio:
             max_net_exposure=rc.get("max_net_exposure", 1.0),
             max_daily_loss_pct=rc.get("max_daily_loss_pct", 0.05),
         )
+        # Build orchestration profiles (migrate from single code/params if needed)
+        profiles_data = data.get("orchestration_profiles", [])
+        if profiles_data:
+            orch_profiles = [
+                OrchestrationProfile(
+                    id=p["id"],
+                    name=p.get("name", "Untitled"),
+                    code=p.get("code", ""),
+                    params=p.get("params", {}),
+                )
+                for p in profiles_data
+            ]
+            active_orch = data.get("active_orchestration")
+        else:
+            code = data.get("orchestration_code")
+            params = data.get("orchestration_params", {})
+            if code:
+                pid = str(uuid.uuid4())
+                orch_profiles = [
+                    OrchestrationProfile(id=pid, name="Default", code=code, params=params)
+                ]
+                active_orch = pid
+            else:
+                orch_profiles = []
+                active_orch = None
+
         return cls(
             id=data["id"],
             name=data.get("name", "Untitled Portfolio"),
@@ -112,6 +157,9 @@ class Portfolio:
             risk_config=risk_config,
             initial_cash=data.get("initial_cash", 10_000.0),
             orchestration_code=data.get("orchestration_code"),
+            orchestration_params=data.get("orchestration_params", {}),
+            orchestration_profiles=orch_profiles,
+            active_orchestration=active_orch,
             exchange=data.get("exchange", "kraken"),
             profile=data.get("profile", "default"),
             created_at=datetime.fromisoformat(data["created_at"])

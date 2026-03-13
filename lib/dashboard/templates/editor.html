@@ -5,156 +5,1032 @@
 <div class="flex flex-col h-[calc(100vh-8rem)]">
     <!-- Tab Bar -->
     <div class="flex items-center space-x-1 mb-3">
-        <button onclick="switchEditorMode('strategy')" id="tab-strategy"
-                class="px-4 py-2 rounded-t text-sm font-medium bg-blue-600 text-white">Strategy</button>
         <button onclick="switchEditorMode('portfolio')" id="tab-portfolio"
                 class="px-4 py-2 rounded-t text-sm font-medium text-gray-400 hover:text-white">Portfolio</button>
         <button onclick="switchEditorMode('module')" id="tab-module"
                 class="px-4 py-2 rounded-t text-sm font-medium text-gray-400 hover:text-white">Module</button>
     </div>
 
-    <!-- Toolbar -->
-    <div class="card rounded-t p-3 flex items-center space-x-3 border-b border-gray-700">
-        <!-- Strategy toolbar -->
-        <div id="toolbar-strategy" class="flex items-center space-x-3">
-            <input type="text" id="strategy-name" placeholder="Strategy name"
-                   class="bg-gray-800 border border-gray-600 rounded px-3 py-1.5 text-gray-200 text-sm w-48 focus:outline-none focus:border-blue-500">
-            <select id="template-picker"
-                    class="bg-gray-800 border border-gray-600 rounded px-3 py-1.5 text-gray-200 text-sm focus:outline-none focus:border-blue-500">
-                <option value="">Load template...</option>
-                {% for tpl in templates %}
-                    <option value="{{ tpl }}">{{ tpl }}</option>
-                {% endfor %}
-            </select>
-            <button onclick="saveStrategy()"
-                    class="bg-green-600 hover:bg-green-700 text-white px-4 py-1.5 rounded text-sm font-medium">Save</button>
-        </div>
-
-        <!-- Portfolio toolbar -->
-        <div id="toolbar-portfolio" class="hidden flex items-center space-x-3">
-            <select id="portfolio-selector"
-                    class="bg-gray-800 border border-gray-600 rounded px-3 py-1.5 text-gray-200 text-sm focus:outline-none focus:border-blue-500">
+    <!-- ============================================================
+         PORTFOLIO TAB
+         ============================================================ -->
+    <div id="panel-portfolio" class="hidden flex flex-col flex-1 min-h-0">
+        <!-- Toolbar -->
+        <div class="card rounded-t rounded-b-none p-3 flex items-center space-x-3 border-b border-gray-700">
+            <select id="portfolio-selector" onchange="loadPortfolio(this.value)"
+                    class="bg-gray-800 border border-gray-600 rounded px-3 py-1.5 text-gray-200 text-sm w-56 focus:outline-none focus:border-blue-500">
                 <option value="">Select portfolio...</option>
                 {% for p in portfolios %}
-                    <option value="{{ p.name }}">{{ p.name }}</option>
+                <option value="{{ p.id }}">{{ p.name }}</option>
                 {% endfor %}
             </select>
+            <span id="portfolio-mode-badge" class="hidden badge badge-backtest text-xs"></span>
+            <span id="portfolio-exchange" class="text-xs text-gray-500"></span>
+            <div class="flex-1"></div>
             <button onclick="savePortfolio()"
-                    class="bg-green-600 hover:bg-green-700 text-white px-4 py-1.5 rounded text-sm font-medium">Save</button>
+                    class="bg-green-600 hover:bg-green-700 text-white px-4 py-1.5 rounded text-sm font-medium">Save Portfolio</button>
         </div>
-
-        <!-- Module toolbar -->
-        <div id="toolbar-module" class="hidden flex items-center space-x-3">
-            <span id="module-filename" class="text-sm text-gray-400">No file selected</span>
-            <button onclick="runModule()"
-                    class="bg-yellow-600 hover:bg-yellow-700 text-white px-4 py-1.5 rounded text-sm font-medium">Run</button>
-            <button onclick="saveModule()"
-                    class="bg-green-600 hover:bg-green-700 text-white px-4 py-1.5 rounded text-sm font-medium">Save</button>
+        <!-- Sub-tab bar (hidden until portfolio loaded) -->
+        <div id="portfolio-subtabs" class="hidden flex items-center space-x-1 bg-gray-900 border-b border-gray-700 px-3">
+            <button onclick="switchPortfolioSubTab('strategies')" id="subtab-strategies"
+                    class="portfolio-subtab px-3 py-1.5 text-xs font-medium text-gray-400 border-b-2 border-transparent">Strategies</button>
+            <button onclick="switchPortfolioSubTab('orchestration')" id="subtab-orchestration"
+                    class="portfolio-subtab px-3 py-1.5 text-xs font-medium text-gray-400 border-b-2 border-transparent">Orchestration</button>
+        </div>
+        <!-- Sub-panel: Strategies (form + monaco) -->
+        <div id="subpanel-strategies" class="flex flex-1 min-h-0">
+            <!-- Left: form panel -->
+            <div id="portfolio-form" class="form-panel overflow-y-auto p-4 border-r border-gray-700">
+                <div id="portfolio-empty" class="text-gray-500 text-sm mt-8 text-center">
+                    Select a portfolio above to edit its strategy allocations.
+                </div>
+                <div id="portfolio-strategies" class="hidden">
+                    <div class="flex items-center justify-between mb-3">
+                        <h3 class="text-sm font-semibold text-gray-300">Strategies</h3>
+                        <button onclick="addStrategy()"
+                                class="text-xs bg-blue-600 hover:bg-blue-700 text-white px-2 py-1 rounded">+ Add</button>
+                    </div>
+                    <div id="strategy-cards"></div>
+                    <div id="allocation-total" class="mt-3 text-xs text-gray-400">
+                        Total allocation: <span id="alloc-pct">0</span>%
+                    </div>
+                </div>
+            </div>
+            <!-- Right: Monaco for strategy code -->
+            <div id="monaco-portfolio" class="flex-1 min-h-0"></div>
+        </div>
+        <!-- Sub-panel: Orchestration (sidebar + monaco) -->
+        <div id="subpanel-orchestration" class="hidden flex flex-1 min-h-0">
+            <!-- Left: profile cards sidebar -->
+            <div class="form-panel overflow-y-auto p-4 border-r border-gray-700">
+                <div id="orch-empty" class="text-gray-500 text-sm mt-8 text-center">
+                    Select a portfolio above to manage orchestration profiles.
+                </div>
+                <div id="orch-profiles-section" class="hidden">
+                    <div class="flex items-center justify-between mb-3">
+                        <h3 class="text-sm font-semibold text-gray-300">Profiles</h3>
+                        <button onclick="addOrchProfile()"
+                                class="text-xs bg-blue-600 hover:bg-blue-700 text-white px-2 py-1 rounded">+ Add</button>
+                    </div>
+                    <div id="orch-profile-cards"></div>
+                </div>
+            </div>
+            <!-- Right: Monaco editor -->
+            <div id="monaco-orchestration" class="flex-1 min-h-0"></div>
         </div>
     </div>
 
-    <!-- Editor Area -->
-    <div class="flex flex-1 min-h-0">
-        <!-- File tree (module mode only) -->
-        <div id="file-tree" class="hidden w-56 card border-r border-gray-700 overflow-y-auto p-2 text-sm">
-            <div class="text-gray-400 font-semibold mb-2 px-1">Files</div>
-            <div id="file-tree-list">
-                {% for file in module_files %}
-                    <div class="px-2 py-1 rounded cursor-pointer hover:bg-gray-700 text-gray-300"
-                         onclick="loadModuleFile('{{ file }}')">{{ file }}</div>
-                {% endfor %}
+    <!-- ============================================================
+         MODULE TAB
+         ============================================================ -->
+    <div id="panel-module" class="hidden flex flex-col flex-1 min-h-0">
+        <!-- Toolbar -->
+        <div class="card rounded-t rounded-b-none p-3 flex items-center space-x-3 border-b border-gray-700">
+            <span id="module-filename" class="text-sm text-gray-400">No file selected</span>
+            <div class="flex-1"></div>
+            <button onclick="runModuleFile()"
+                    class="bg-yellow-600 hover:bg-yellow-700 text-white px-4 py-1.5 rounded text-sm font-medium">Run</button>
+            <button onclick="saveModuleFile()"
+                    class="bg-green-600 hover:bg-green-700 text-white px-4 py-1.5 rounded text-sm font-medium">Save</button>
+        </div>
+        <!-- Split: File tree | Monaco -->
+        <div class="flex flex-1 min-h-0">
+            <!-- File tree sidebar -->
+            <div id="file-tree" class="file-tree overflow-y-auto p-2 text-sm">
+                <div class="flex items-center justify-between px-1 mb-2">
+                    <span class="text-gray-400 font-semibold">Modules</span>
+                    <button onclick="createModule()" class="text-xs text-blue-400 hover:text-blue-300">+ New</button>
+                </div>
+                <div id="file-tree-list"></div>
+            </div>
+            <!-- Monaco + Output -->
+            <div class="flex flex-col flex-1 min-h-0">
+                <div id="monaco-module" class="flex-1 min-h-0"></div>
+                <!-- Output panel -->
+                <div id="output-panel" class="hidden border-t border-gray-700 overflow-y-auto font-mono text-xs"
+                     style="height: 160px; background: #0d0d1a;">
+                    <div class="flex items-center justify-between px-3 py-1 border-b border-gray-800">
+                        <span class="text-gray-500 text-xs">Output</span>
+                        <button onclick="document.getElementById('output-panel').classList.add('hidden')"
+                                class="text-gray-600 hover:text-gray-400 text-xs">Close</button>
+                    </div>
+                    <pre id="output-content" class="p-3 text-gray-300 whitespace-pre-wrap"></pre>
+                </div>
             </div>
         </div>
-
-        <!-- Monaco container -->
-        <div id="monaco-container" class="flex-1 min-h-0"></div>
-    </div>
-
-    <!-- Output Panel (module mode) -->
-    <div id="output-panel" class="hidden card border-t border-gray-700 h-40 overflow-y-auto p-3 font-mono text-xs text-gray-300">
-        <div class="text-gray-500 mb-1">Output:</div>
-        <pre id="output-content"></pre>
     </div>
 </div>
 {% endblock %}
 
 {% block scripts %}
 <script>
-    let editor = null;
-    let currentMode = 'strategy';
+(function() {
+    // ======================================================================
+    // State
+    // ======================================================================
+    let editors = {};          // keyed: portfolio, orchestration, module
+    let currentMode = '{{ initial_mode or "portfolio" }}';
+    let currentSubTab = 'strategies';
+    let portfolioData = null;  // full portfolio dict when loaded
+    let activeStrategyIndex = -1;
+    let currentModuleName = null;
+    let currentModuleFile = null;
+    const STARTER_TEMPLATE = `"""Strategy Template
+Write your strategy by defining an on_bar() function.
 
-    // Init Monaco
+Available in namespace:
+  - pd (pandas), np (numpy)
+  - Order, OrderSide, OrderType (from models.order)
+  - ta (pandas_ta, if installed)
+
+Parameters are passed via the \`params\` dict.
+Positions maps symbol -> current quantity held.
+Return a list of Order objects (or empty list for no action).
+"""
+
+from models.order import Order, OrderSide, OrderType
+
+
+def on_bar(bars, positions, params):
+    # bars: pd.DataFrame with columns [open, high, low, close, volume]
+    # positions: dict[str, float] e.g. {"BTC/USD": 0.01}
+    # params: dict from portfolio config e.g. {"fast_period": 10}
+
+    symbol = params.get("symbol", "BTC/USD")
+    quantity = params.get("quantity", 0.01)
+
+    # Your logic here...
+
+    return []  # Return list of Order objects
+`;
+
+    const ORCHESTRATION_TEMPLATES = {
+        blank: {
+            name: "Blank",
+            description: "Empty pass-through — returns allocations unchanged.",
+            code: `"""Portfolio Orchestration
+Define a manage_portfolio() function to dynamically adjust strategy allocations.
+
+Args:
+    strategy_signals: dict of strategy_id -> list[Order]
+    allocations: dict of strategy_id -> float (current allocation fractions)
+    positions: dict of strategy_id -> dict[symbol, float]
+    market_data: dict of symbol -> pd.DataFrame
+    params: dict of orchestration parameters
+Returns:
+    dict of strategy_id -> float (new allocations)
+"""
+
+
+def manage_portfolio(strategy_signals, allocations, positions, market_data, params):
+    return allocations
+`,
+        },
+        risk_parity: {
+            name: "Risk Parity",
+            description: "Inverse-volatility weighting — allocates more to lower-vol strategies.",
+            code: `"""Risk Parity Orchestration
+Rebalances allocations by inverse volatility so each strategy contributes
+equal risk to the portfolio.
+"""
+import numpy as np
+
+
+def manage_portfolio(strategy_signals, allocations, positions, market_data, params):
+    lookback = int(params.get("lookback", 60))
+    vols = {}
+
+    for sid, alloc in allocations.items():
+        # Use first symbol's close series as proxy for strategy vol
+        pos = positions.get(sid, {})
+        symbol = next(iter(pos), None) if pos else None
+        if symbol and symbol in market_data:
+            df = market_data[symbol]
+            if len(df) >= lookback:
+                returns = df["close"].pct_change().dropna().tail(lookback)
+                vol = returns.std()
+                if vol > 0:
+                    vols[sid] = vol
+                    continue
+        vols[sid] = 1.0  # fallback
+
+    inv_vols = {sid: 1.0 / v for sid, v in vols.items()}
+    total = sum(inv_vols.values())
+    return {sid: iv / total for sid, iv in inv_vols.items()}
+`,
+        },
+        momentum_rotation: {
+            name: "Momentum Rotation",
+            description: "Concentrates capital on the top-N strategies by recent returns.",
+            code: `"""Momentum Rotation Orchestration
+Ranks strategies by trailing return and concentrates allocation on
+the top N performers.
+"""
+
+
+def manage_portfolio(strategy_signals, allocations, positions, market_data, params):
+    top_n = int(params.get("top_n", 2))
+    lookback = int(params.get("lookback", 20))
+    scores = {}
+
+    for sid in allocations:
+        pos = positions.get(sid, {})
+        symbol = next(iter(pos), None) if pos else None
+        if symbol and symbol in market_data:
+            df = market_data[symbol]
+            if len(df) >= lookback:
+                ret = (df["close"].iloc[-1] / df["close"].iloc[-lookback]) - 1
+                scores[sid] = ret
+                continue
+        scores[sid] = 0.0
+
+    ranked = sorted(scores, key=scores.get, reverse=True)
+    winners = set(ranked[:top_n])
+    new_alloc = {}
+    for sid in allocations:
+        new_alloc[sid] = 1.0 / top_n if sid in winners else 0.0
+    return new_alloc
+`,
+        },
+    };
+    const ORCHESTRATION_TEMPLATE = ORCHESTRATION_TEMPLATES.blank.code;
+    let orchProfiles = [];      // [{id, name, code, params}]
+    let activeOrchId = null;    // id of the active profile
+    let editingOrchIndex = -1;  // which profile's code is in the editor
+
+    // ======================================================================
+    // Monaco Init
+    // ======================================================================
     require.config({ paths: { vs: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs' } });
-    require(['vs/editor/editor.main'], function () {
-        editor = monaco.editor.create(document.getElementById('monaco-container'), {
-            value: '# Write your strategy here\n',
+    require(['vs/editor/editor.main'], function() {
+        const editorOpts = {
             language: 'python',
             theme: 'vs-dark',
             fontSize: 14,
             minimap: { enabled: false },
             automaticLayout: true,
-            scrollBeyondLastLine: false
-        });
+            scrollBeyondLastLine: false,
+            tabSize: 4,
+            insertSpaces: true,
+        };
+
+        // Portfolio (strategy code) editor
+        const portfolioContainer = document.getElementById('monaco-portfolio');
+        if (portfolioContainer) {
+            editors.portfolio = monaco.editor.create(portfolioContainer, { ...editorOpts, value: '' });
+        }
+
+        // Orchestration editor
+        const orchestrationContainer = document.getElementById('monaco-orchestration');
+        if (orchestrationContainer) {
+            editors.orchestration = monaco.editor.create(orchestrationContainer, { ...editorOpts, value: '' });
+        }
+
+        // Module editor
+        const moduleContainer = document.getElementById('monaco-module');
+        if (moduleContainer) {
+            editors.module = monaco.editor.create(moduleContainer, { ...editorOpts, value: '' });
+        }
+
+        // Activate initial mode after editors are ready
+        switchEditorMode(currentMode);
+
+        // Load initial portfolio if provided by server
+        {% if initial_portfolio %}
+        const initPortfolio = {{ initial_portfolio | tojson }};
+        const sel = document.getElementById('portfolio-selector');
+        if (sel) sel.value = initPortfolio.id;
+        applyPortfolioData(initPortfolio);
+        {% endif %}
     });
 
-    function switchEditorMode(mode) {
+    // ======================================================================
+    // Mode Switching
+    // ======================================================================
+    window.switchEditorMode = function(mode) {
         currentMode = mode;
-        ['strategy', 'portfolio', 'module'].forEach(m => {
-            document.getElementById('tab-' + m).className =
-                m === mode
-                    ? 'px-4 py-2 rounded-t text-sm font-medium bg-blue-600 text-white'
-                    : 'px-4 py-2 rounded-t text-sm font-medium text-gray-400 hover:text-white';
-            document.getElementById('toolbar-' + m).classList.toggle('hidden', m !== mode);
+        ['portfolio', 'module'].forEach(function(m) {
+            const tab = document.getElementById('tab-' + m);
+            tab.className = m === mode
+                ? 'px-4 py-2 rounded-t text-sm font-medium bg-blue-600 text-white'
+                : 'px-4 py-2 rounded-t text-sm font-medium text-gray-400 hover:text-white';
+            document.getElementById('panel-' + m).classList.toggle('hidden', m !== mode);
         });
-        document.getElementById('file-tree').classList.toggle('hidden', mode !== 'module');
-        document.getElementById('output-panel').classList.toggle('hidden', mode !== 'module');
-    }
+        // Refresh module file tree when switching to module tab
+        if (mode === 'module') loadModuleList();
+        // Re-layout visible editors
+        if (mode === 'portfolio') {
+            if (currentSubTab === 'strategies' && editors.portfolio) editors.portfolio.layout();
+            if (currentSubTab === 'orchestration' && editors.orchestration) editors.orchestration.layout();
+        }
+        if (mode === 'module' && editors.module) editors.module.layout();
+    };
 
-    function saveStrategy() {
-        const name = document.getElementById('strategy-name').value;
-        if (!name) { alert('Enter a strategy name'); return; }
-        fetch('/editor/strategy', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name: name, code: editor.getValue() })
-        }).then(r => r.json()).then(d => showToast(d.message || 'Saved'));
-    }
+    // ======================================================================
+    // Portfolio Sub-tab Switching
+    // ======================================================================
+    window.switchPortfolioSubTab = function(tab) {
+        // Sync code before switching
+        syncCodeFromEditor();
+        currentSubTab = tab;
 
-    function savePortfolio() {
-        const name = document.getElementById('portfolio-selector').value;
-        if (!name) return;
-        fetch('/editor/portfolio', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name: name, config: editor.getValue() })
-        }).then(r => r.json()).then(d => showToast(d.message || 'Saved'));
-    }
+        // Toggle sub-panels
+        document.getElementById('subpanel-strategies').classList.toggle('hidden', tab !== 'strategies');
+        document.getElementById('subpanel-orchestration').classList.toggle('hidden', tab !== 'orchestration');
 
-    function loadModuleFile(path) {
-        document.getElementById('module-filename').textContent = path;
-        fetch('/editor/module?path=' + encodeURIComponent(path))
+        // Style sub-tab buttons
+        ['strategies', 'orchestration'].forEach(function(t) {
+            const btn = document.getElementById('subtab-' + t);
+            if (t === tab) {
+                btn.style.color = '#e2e8f0';
+                btn.style.borderBottomColor = '#4287f5';
+            } else {
+                btn.style.color = '';
+                btn.style.borderBottomColor = 'transparent';
+            }
+        });
+
+        // Layout the visible editor
+        if (tab === 'strategies' && editors.portfolio) editors.portfolio.layout();
+        if (tab === 'orchestration' && editors.orchestration) editors.orchestration.layout();
+    };
+
+    // ======================================================================
+    // Portfolio Tab
+    // ======================================================================
+    window.loadPortfolio = function(id) {
+        if (!id) { resetPortfolioForm(); return; }
+        fetch('/api/portfolios/' + encodeURIComponent(id))
             .then(r => r.json())
-            .then(d => editor.setValue(d.content || ''));
+            .then(d => {
+                if (d.error) { showToast(d.error, 'error'); return; }
+                applyPortfolioData(d);
+            })
+            .catch(err => showToast('Failed to load portfolio', 'error'));
+    };
+
+    function resetPortfolioForm() {
+        portfolioData = null;
+        activeStrategyIndex = -1;
+        orchProfiles = [];
+        activeOrchId = null;
+        editingOrchIndex = -1;
+        document.getElementById('portfolio-empty').classList.remove('hidden');
+        document.getElementById('portfolio-strategies').classList.add('hidden');
+        document.getElementById('portfolio-mode-badge').classList.add('hidden');
+        document.getElementById('portfolio-exchange').textContent = '';
+        document.getElementById('portfolio-subtabs').classList.add('hidden');
+        document.getElementById('orch-empty').classList.remove('hidden');
+        document.getElementById('orch-profiles-section').classList.add('hidden');
+        if (editors.portfolio) editors.portfolio.setValue('');
+        if (editors.orchestration) editors.orchestration.setValue('');
     }
 
-    function saveModule() {
-        const path = document.getElementById('module-filename').textContent;
-        if (path === 'No file selected') return;
-        fetch('/editor/module', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path: path, content: editor.getValue() })
-        }).then(r => r.json()).then(d => showToast(d.message || 'Saved'));
+    function applyPortfolioData(data) {
+        portfolioData = data;
+        activeStrategyIndex = -1;
+
+        document.getElementById('portfolio-empty').classList.add('hidden');
+        document.getElementById('portfolio-strategies').classList.remove('hidden');
+
+        // Mode badge
+        const badge = document.getElementById('portfolio-mode-badge');
+        badge.textContent = data.mode;
+        badge.className = 'badge badge-' + data.mode + ' text-xs';
+        badge.classList.remove('hidden');
+
+        // Exchange
+        document.getElementById('portfolio-exchange').textContent = data.exchange || '';
+
+        // Show sub-tabs
+        document.getElementById('portfolio-subtabs').classList.remove('hidden');
+
+        // Load orchestration profiles
+        if (data.orchestration_profiles && data.orchestration_profiles.length > 0) {
+            orchProfiles = data.orchestration_profiles.map(function(p) { return {id: p.id, name: p.name, code: p.code, params: p.params}; });
+            activeOrchId = data.active_orchestration || null;
+        } else if (data.orchestration_code) {
+            var orchId = 'orch_' + Date.now();
+            orchProfiles = [{id: orchId, name: 'Default', code: data.orchestration_code, params: data.orchestration_params || {}}];
+            activeOrchId = orchId;
+        } else {
+            orchProfiles = [];
+            activeOrchId = null;
+        }
+        editingOrchIndex = orchProfiles.length > 0 ? 0 : -1;
+        document.getElementById('orch-empty').classList.add('hidden');
+        document.getElementById('orch-profiles-section').classList.remove('hidden');
+        renderOrchProfileCards();
+        if (editingOrchIndex >= 0 && editors.orchestration) {
+            editors.orchestration.setValue(orchProfiles[editingOrchIndex].code || ORCHESTRATION_TEMPLATE);
+        } else if (editors.orchestration) {
+            editors.orchestration.setValue('');
+        }
+
+        renderStrategyCards();
+
+        // Show first strategy code
+        if (data.strategies && data.strategies.length > 0) {
+            editStrategyCode(0);
+        } else {
+            if (editors.portfolio) editors.portfolio.setValue('// No strategies yet. Click "+ Add" to add one.');
+        }
+
+        // Default to strategies sub-tab
+        switchPortfolioSubTab('strategies');
     }
 
-    function runModule() {
-        const el = document.getElementById('output-content');
-        el.textContent = 'Running...\n';
-        fetch('/editor/run', {
+    function renderStrategyCards() {
+        const container = document.getElementById('strategy-cards');
+        container.innerHTML = '';
+        if (!portfolioData || !portfolioData.strategies) return;
+
+        portfolioData.strategies.forEach(function(strat, idx) {
+            const card = document.createElement('div');
+            card.className = 'strategy-card' + (idx === activeStrategyIndex ? ' active' : '');
+            card.innerHTML = `
+                <div class="flex items-center justify-between mb-2">
+                    <span class="text-xs font-semibold text-gray-300">#${idx + 1}</span>
+                    <button onclick="removeStrategy(${idx})" class="text-red-400 hover:text-red-300 text-xs">&times;</button>
+                </div>
+                <div class="form-group">
+                    <label>Name</label>
+                    <input type="text" value="${strat.strategy_name || ''}"
+                           onchange="updateStrategy(${idx}, 'strategy_name', this.value)"
+                           placeholder="My strategy name"
+                           class="bg-gray-800 border border-gray-600 rounded px-2 py-1 text-gray-200 text-xs w-full">
+                </div>
+                <div class="form-group">
+                    <label>Load from template</label>
+                    <select onchange="loadTemplateIntoStrategy(${idx}, this.value); this.value='';"
+                            class="bg-gray-800 border border-gray-600 rounded px-2 py-1 text-gray-200 text-xs w-full">
+                        <option value="">Load from template...</option>
+                        {% for tpl in templates %}
+                        <option value="{{ tpl }}">{{ tpl }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Symbols</label>
+                    <input type="text" value="${(strat.symbols || []).join(', ')}"
+                           onchange="updateStrategy(${idx}, 'symbols', this.value.split(',').map(s=>s.trim()).filter(Boolean))"
+                           placeholder="BTC/USD, ETH/USD"
+                           class="bg-gray-800 border border-gray-600 rounded px-2 py-1 text-gray-200 text-xs w-full">
+                </div>
+                <div class="form-group">
+                    <label>Timeframe</label>
+                    <select onchange="updateStrategy(${idx}, 'timeframe', this.value)"
+                            class="bg-gray-800 border border-gray-600 rounded px-2 py-1 text-gray-200 text-xs w-full">
+                        ${['1m','5m','15m','1h','4h','1d'].map(tf =>
+                            '<option value="' + tf + '"' + (strat.timeframe === tf ? ' selected' : '') + '>' + tf + '</option>'
+                        ).join('')}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Params</label>
+                    <div id="params-${idx}">
+                        ${Object.entries(strat.params || {}).map(([k, v], pi) => `
+                            <div class="flex space-x-1 mb-1">
+                                <input type="text" value="${k}" placeholder="key"
+                                       onchange="updateParam(${idx}, ${pi}, 'key', this.value)"
+                                       class="bg-gray-800 border border-gray-600 rounded px-2 py-0.5 text-gray-200 text-xs flex-1">
+                                <input type="text" value="${v}" placeholder="value"
+                                       onchange="updateParam(${idx}, ${pi}, 'value', this.value)"
+                                       class="bg-gray-800 border border-gray-600 rounded px-2 py-0.5 text-gray-200 text-xs flex-1">
+                                <button onclick="removeParam(${idx}, ${pi})" class="text-red-400 text-xs">&times;</button>
+                            </div>
+                        `).join('')}
+                    </div>
+                    <button onclick="addParam(${idx})" class="text-xs text-blue-400 hover:text-blue-300 mt-1">+ param</button>
+                </div>
+                <button onclick="editStrategyCode(${idx})"
+                        class="text-xs ${idx === activeStrategyIndex ? 'text-green-400' : 'text-blue-400 hover:text-blue-300'} mt-1">
+                    ${idx === activeStrategyIndex ? 'Editing code...' : 'Edit Code'}
+                </button>
+            `;
+            container.appendChild(card);
+        });
+
+        updateAllocationTotal();
+    }
+
+    function updateAllocationTotal() {
+        if (!portfolioData || !portfolioData.strategies) return;
+        const total = portfolioData.strategies.reduce((s, st) => s + (st.allocation_pct || 0), 0);
+        const pct = Math.round(total * 100);
+        const el = document.getElementById('alloc-pct');
+        el.textContent = pct;
+        const wrapper = document.getElementById('allocation-total');
+        wrapper.className = pct === 100
+            ? 'mt-3 text-xs text-green-400'
+            : 'mt-3 text-xs allocation-warning';
+    }
+
+    window.updateStrategy = function(idx, field, value) {
+        if (!portfolioData || !portfolioData.strategies[idx]) return;
+        portfolioData.strategies[idx][field] = value;
+    };
+
+    window.loadTemplateIntoStrategy = function(idx, templateName) {
+        if (!templateName || !portfolioData || !portfolioData.strategies[idx]) return;
+        fetch('/editor/api/strategies/' + encodeURIComponent(templateName))
+            .then(r => r.json())
+            .then(d => {
+                if (d.error) { showToast(d.error, 'error'); return; }
+                if (d.source) {
+                    portfolioData.strategies[idx].source_code = d.source;
+                    portfolioData.strategies[idx].strategy_id = templateName;
+                    if (idx === activeStrategyIndex && editors.portfolio) {
+                        editors.portfolio.setValue(d.source);
+                    }
+                }
+            })
+            .catch(() => showToast('Failed to load template', 'error'));
+    };
+
+    window.updateParam = function(stratIdx, paramIdx, which, value) {
+        const strat = portfolioData.strategies[stratIdx];
+        const entries = Object.entries(strat.params || {});
+        if (paramIdx >= entries.length) return;
+        const newParams = {};
+        entries.forEach(function([k, v], i) {
+            if (i === paramIdx) {
+                const newKey = which === 'key' ? value : k;
+                const newVal = which === 'value' ? value : v;
+                newParams[newKey] = newVal;
+            } else {
+                newParams[k] = v;
+            }
+        });
+        strat.params = newParams;
+    };
+
+    window.addParam = function(stratIdx) {
+        const strat = portfolioData.strategies[stratIdx];
+        if (!strat.params) strat.params = {};
+        strat.params[''] = '';
+        renderStrategyCards();
+    };
+
+    window.removeParam = function(stratIdx, paramIdx) {
+        const strat = portfolioData.strategies[stratIdx];
+        const entries = Object.entries(strat.params || {});
+        const newParams = {};
+        entries.forEach(function([k, v], i) {
+            if (i !== paramIdx) newParams[k] = v;
+        });
+        strat.params = newParams;
+        renderStrategyCards();
+    };
+
+    // ==================================================================
+    // Orchestration Profile functions
+    // ==================================================================
+    function renderOrchProfileCards() {
+        const container = document.getElementById('orch-profile-cards');
+        if (!container) return;
+        container.innerHTML = '';
+        orchProfiles.forEach(function(profile, idx) {
+            const isEditing = idx === editingOrchIndex;
+            const isActive = profile.id === activeOrchId;
+            const paramEntries = Object.entries(profile.params || {});
+            const card = document.createElement('div');
+            card.className = 'strategy-card' + (isEditing ? ' active' : '');
+            card.innerHTML = `
+                <div class="flex items-center justify-between mb-2">
+                    <span class="text-xs font-semibold text-gray-300">#${idx + 1}</span>
+                    <div class="flex items-center gap-2">
+                        <label class="flex items-center gap-1 text-xs cursor-pointer ${isActive ? 'text-green-400' : 'text-gray-500'}">
+                            <input type="radio" name="orch-active" ${isActive ? 'checked' : ''}
+                                   onchange="setActiveOrchProfile(${idx})">
+                            Active
+                        </label>
+                        <button onclick="removeOrchProfile(${idx})" class="text-red-400 hover:text-red-300 text-xs">&times;</button>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Name</label>
+                    <input type="text" value="${profile.name || ''}"
+                           onchange="updateOrchProfileField(${idx}, 'name', this.value)"
+                           placeholder="Profile name"
+                           class="bg-gray-800 border border-gray-600 rounded px-2 py-1 text-gray-200 text-xs w-full">
+                </div>
+                <div class="form-group">
+                    <label>Load from template</label>
+                    <select onchange="loadOrchTemplateIntoProfile(${idx}, this.value); this.value='';"
+                            class="bg-gray-800 border border-gray-600 rounded px-2 py-1 text-gray-200 text-xs w-full">
+                        <option value="">Select template...</option>
+                        ${Object.entries(ORCHESTRATION_TEMPLATES).map(([key, tpl]) =>
+                            '<option value="' + key + '">' + tpl.name + '</option>'
+                        ).join('')}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <div class="flex items-center justify-between mb-2">
+                        <label>Params</label>
+                        <button onclick="addOrchProfileParam(${idx})" class="text-xs text-blue-400 hover:text-blue-300">+ param</button>
+                    </div>
+                    <div>
+                        ${paramEntries.map(([k, v], pi) => `
+                            <div class="flex space-x-1 mb-1">
+                                <input type="text" value="${k}" placeholder="key"
+                                       onchange="updateOrchProfileParam(${idx}, ${pi}, 'key', this.value)"
+                                       class="bg-gray-800 border border-gray-600 rounded px-2 py-0.5 text-gray-200 text-xs flex-1">
+                                <input type="text" value="${v}" placeholder="value"
+                                       onchange="updateOrchProfileParam(${idx}, ${pi}, 'value', this.value)"
+                                       class="bg-gray-800 border border-gray-600 rounded px-2 py-0.5 text-gray-200 text-xs flex-1">
+                                <button onclick="removeOrchProfileParam(${idx}, ${pi})" class="text-red-400 text-xs">&times;</button>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+                <button onclick="editOrchProfileCode(${idx})"
+                        class="text-xs ${isEditing ? 'text-green-400' : 'text-blue-400 hover:text-blue-300'} mt-1">
+                    ${isEditing ? 'Editing code...' : 'Edit Code'}
+                </button>
+            `;
+            container.appendChild(card);
+        });
+    }
+
+    window.addOrchProfile = function() {
+        var id = 'orch_' + Date.now();
+        var n = orchProfiles.length + 1;
+        orchProfiles.push({
+            id: id,
+            name: 'Profile ' + n,
+            code: ORCHESTRATION_TEMPLATE,
+            params: {},
+        });
+        if (orchProfiles.length === 1) activeOrchId = id;
+        renderOrchProfileCards();
+        editOrchProfileCode(orchProfiles.length - 1);
+    };
+
+    window.removeOrchProfile = function(idx) {
+        if (idx < 0 || idx >= orchProfiles.length) return;
+        var removed = orchProfiles.splice(idx, 1)[0];
+        if (removed.id === activeOrchId) {
+            activeOrchId = orchProfiles.length > 0 ? orchProfiles[0].id : null;
+        }
+        if (editingOrchIndex === idx) {
+            editingOrchIndex = orchProfiles.length > 0 ? 0 : -1;
+            if (editingOrchIndex >= 0 && editors.orchestration) {
+                editors.orchestration.setValue(orchProfiles[editingOrchIndex].code || '');
+            } else if (editors.orchestration) {
+                editors.orchestration.setValue('');
+            }
+        } else if (editingOrchIndex > idx) {
+            editingOrchIndex--;
+        }
+        renderOrchProfileCards();
+    };
+
+    window.setActiveOrchProfile = function(idx) {
+        if (idx >= 0 && idx < orchProfiles.length) {
+            activeOrchId = orchProfiles[idx].id;
+            renderOrchProfileCards();
+        }
+    };
+
+    window.editOrchProfileCode = function(idx) {
+        if (editors.orchestration && editingOrchIndex >= 0 && orchProfiles[editingOrchIndex]) {
+            orchProfiles[editingOrchIndex].code = editors.orchestration.getValue();
+        }
+        editingOrchIndex = idx;
+        if (editors.orchestration && orchProfiles[idx]) {
+            editors.orchestration.setValue(orchProfiles[idx].code || ORCHESTRATION_TEMPLATE);
+        }
+        renderOrchProfileCards();
+    };
+
+    window.updateOrchProfileField = function(idx, field, value) {
+        if (orchProfiles[idx]) orchProfiles[idx][field] = value;
+    };
+
+    window.loadOrchTemplateIntoProfile = function(idx, key) {
+        if (!key || !orchProfiles[idx]) return;
+        var tpl = ORCHESTRATION_TEMPLATES[key];
+        if (!tpl) return;
+        orchProfiles[idx].code = tpl.code;
+        if (idx === editingOrchIndex && editors.orchestration) {
+            editors.orchestration.setValue(tpl.code);
+        }
+    };
+
+    window.addOrchProfileParam = function(idx) {
+        if (!orchProfiles[idx]) return;
+        if (!orchProfiles[idx].params) orchProfiles[idx].params = {};
+        orchProfiles[idx].params[''] = '';
+        renderOrchProfileCards();
+    };
+
+    window.updateOrchProfileParam = function(profIdx, paramIdx, which, value) {
+        var profile = orchProfiles[profIdx];
+        if (!profile) return;
+        var entries = Object.entries(profile.params || {});
+        if (paramIdx >= entries.length) return;
+        var newParams = {};
+        entries.forEach(function([k, v], i) {
+            if (i === paramIdx) {
+                newParams[which === 'key' ? value : k] = which === 'value' ? value : v;
+            } else {
+                newParams[k] = v;
+            }
+        });
+        profile.params = newParams;
+    };
+
+    window.removeOrchProfileParam = function(profIdx, paramIdx) {
+        var profile = orchProfiles[profIdx];
+        if (!profile) return;
+        var entries = Object.entries(profile.params || {});
+        var newParams = {};
+        entries.forEach(function([k, v], i) { if (i !== paramIdx) newParams[k] = v; });
+        profile.params = newParams;
+        renderOrchProfileCards();
+    };
+
+    window.editStrategyCode = function(idx) {
+        syncCodeFromEditor();
+        activeStrategyIndex = idx;
+        const strat = portfolioData.strategies[idx];
+        if (editors.portfolio) {
+            editors.portfolio.setValue(strat.source_code || STARTER_TEMPLATE);
+        }
+        renderStrategyCards();
+    };
+
+    function syncCodeFromEditor() {
+        if (!portfolioData) return;
+        // Sync active orchestration profile from editor
+        if (editors.orchestration && editingOrchIndex >= 0 && orchProfiles[editingOrchIndex]) {
+            orchProfiles[editingOrchIndex].code = editors.orchestration.getValue();
+        }
+        // Sync active strategy from portfolio editor
+        if (editors.portfolio && activeStrategyIndex >= 0 && portfolioData.strategies[activeStrategyIndex]) {
+            portfolioData.strategies[activeStrategyIndex].source_code = editors.portfolio.getValue();
+        }
+    }
+
+    window.addStrategy = function() {
+        if (!portfolioData) return;
+        if (!portfolioData.strategies) portfolioData.strategies = [];
+        const n = portfolioData.strategies.length + 1;
+        portfolioData.strategies.push({
+            strategy_id: 'strategy_' + Date.now(),
+            strategy_name: 'strategy_' + n,
+            allocation_pct: 0,
+            symbols: [],
+            timeframe: '1h',
+            params: {},
+            source_code: STARTER_TEMPLATE,
+        });
+        renderStrategyCards();
+        editStrategyCode(portfolioData.strategies.length - 1);
+    };
+
+    window.removeStrategy = function(idx) {
+        if (!portfolioData || !portfolioData.strategies) return;
+        portfolioData.strategies.splice(idx, 1);
+        if (activeStrategyIndex === idx) {
+            activeStrategyIndex = -1;
+            if (editors.portfolio) editors.portfolio.setValue('');
+        } else if (activeStrategyIndex > idx) {
+            activeStrategyIndex--;
+        }
+        renderStrategyCards();
+    };
+
+    window.savePortfolio = function() {
+        if (!portfolioData) { showToast('No portfolio loaded', 'warning'); return; }
+        syncCodeFromEditor();
+
+        const payload = {
+            name: portfolioData.name,
+            mode: portfolioData.mode,
+            strategies: portfolioData.strategies.map(s => ({
+                strategy_id: s.strategy_id || s.strategy_name,
+                strategy_name: s.strategy_name,
+                allocation_pct: s.allocation_pct,
+                symbols: s.symbols || [],
+                timeframe: s.timeframe || '1h',
+                params: s.params || {},
+                source_code: s.source_code || null,
+            })),
+            risk_config: portfolioData.risk_config,
+            initial_cash: portfolioData.initial_cash,
+            orchestration_profiles: orchProfiles.map(function(p) { return {id: p.id, name: p.name, code: p.code, params: p.params}; }),
+            active_orchestration: activeOrchId,
+            orchestration_code: (function() { var a = orchProfiles.find(function(p) { return p.id === activeOrchId; }); return a ? a.code : null; })(),
+            orchestration_params: (function() { var a = orchProfiles.find(function(p) { return p.id === activeOrchId; }); return a ? a.params || {} : {}; })(),
+            exchange: portfolioData.exchange,
+            profile: portfolioData.profile,
+        };
+
+        fetch('/api/portfolios/' + encodeURIComponent(portfolioData.id), {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        })
+        .then(r => r.json())
+        .then(d => {
+            if (d.error) { showToast(d.error, 'error'); return; }
+            showToast('Portfolio saved', 'success');
+            portfolioData = d;
+        })
+        .catch(err => showToast('Save failed', 'error'));
+    };
+
+    // ======================================================================
+    // Module Tab
+    // ======================================================================
+    window.loadModuleList = function() {
+        fetch('/editor/api/modules')
+            .then(r => r.json())
+            .then(d => {
+                if (d.error) { showToast(d.error, 'error'); return; }
+                renderModuleTree(d.modules || []);
+            })
+            .catch(err => showToast('Failed to load modules', 'error'));
+    };
+
+    function renderModuleTree(modules) {
+        const list = document.getElementById('file-tree-list');
+        list.innerHTML = '';
+        modules.forEach(function(mod) {
+            // Module folder node
+            const folder = document.createElement('div');
+            folder.innerHTML = `
+                <div class="file-tree-item directory" onclick="toggleModuleFolder(this, '${mod.name}')">
+                    <span class="icon">&#9656;</span>
+                    <span>${mod.name}</span>
+                    <button onclick="event.stopPropagation(); createModuleFile('${mod.name}')"
+                            class="ml-auto text-blue-400 hover:text-blue-300 text-xs">+</button>
+                </div>
+                <div class="file-tree-children collapsed" id="module-files-${mod.name}"></div>
+            `;
+            list.appendChild(folder);
+
+            // If this is the currently open module, auto-expand
+            if (currentModuleName === mod.name) {
+                const children = folder.querySelector('.file-tree-children');
+                children.classList.remove('collapsed');
+                folder.querySelector('.icon').innerHTML = '&#9662;';
+                loadModuleFiles(mod.name);
+            }
+        });
+    }
+
+    window.toggleModuleFolder = function(el, name) {
+        const children = el.nextElementSibling;
+        const icon = el.querySelector('.icon');
+        if (children.classList.contains('collapsed')) {
+            children.classList.remove('collapsed');
+            icon.innerHTML = '&#9662;';
+            loadModuleFiles(name);
+        } else {
+            children.classList.add('collapsed');
+            icon.innerHTML = '&#9656;';
+        }
+    };
+
+    window.loadModuleFiles = function(name) {
+        fetch('/editor/api/modules/' + encodeURIComponent(name) + '/files')
+            .then(r => r.json())
+            .then(d => {
+                if (d.error) return;
+                const container = document.getElementById('module-files-' + name);
+                if (!container) return;
+                container.innerHTML = '';
+                (d.files || []).forEach(function(fname) {
+                    const item = document.createElement('div');
+                    item.className = 'file-tree-item' +
+                        (currentModuleName === name && currentModuleFile === fname ? ' active' : '');
+                    item.innerHTML = '<span class="icon">&#9675;</span><span>' + fname + '</span>';
+                    item.onclick = function() {
+                        // Deactivate others
+                        document.querySelectorAll('.file-tree-item.active').forEach(el => el.classList.remove('active'));
+                        item.classList.add('active');
+                        loadModuleFileContent(name, fname);
+                    };
+                    container.appendChild(item);
+                });
+            });
+    };
+
+    window.loadModuleFileContent = function(name, filename) {
+        currentModuleName = name;
+        currentModuleFile = filename;
+        document.getElementById('module-filename').textContent = name + '/' + filename;
+        fetch('/editor/api/modules/' + encodeURIComponent(name) + '/files/' + encodeURIComponent(filename))
+            .then(r => r.json())
+            .then(d => {
+                if (d.error) { showToast(d.error, 'error'); return; }
+                if (editors.module) editors.module.setValue(d.content || '');
+            })
+            .catch(err => showToast('Failed to load file', 'error'));
+    };
+
+    window.saveModuleFile = function() {
+        if (!currentModuleName || !currentModuleFile) {
+            showToast('No file selected', 'warning'); return;
+        }
+        fetch('/editor/api/modules/' + encodeURIComponent(currentModuleName) + '/files/' + encodeURIComponent(currentModuleFile), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ code: editor.getValue() })
-        }).then(r => r.json()).then(d => { el.textContent = d.output || d.error || ''; });
-    }
+            body: JSON.stringify({ content: editors.module.getValue() }),
+        })
+        .then(r => r.json())
+        .then(d => {
+            if (d.ok) showToast('File saved', 'success');
+            else showToast(d.error || 'Save failed', 'error');
+        })
+        .catch(err => showToast('Save failed', 'error'));
+    };
+
+    window.runModuleFile = function() {
+        if (!currentModuleName || !currentModuleFile) {
+            showToast('No file selected', 'warning'); return;
+        }
+        const panel = document.getElementById('output-panel');
+        panel.classList.remove('hidden');
+        const output = document.getElementById('output-content');
+        output.textContent = 'Running...\n';
+
+        fetch('/editor/api/modules/' + encodeURIComponent(currentModuleName) + '/run/' + encodeURIComponent(currentModuleFile), {
+            method: 'POST',
+        })
+        .then(r => r.json())
+        .then(d => {
+            output.innerHTML = '';
+            if (d.stdout) {
+                const span = document.createElement('span');
+                span.textContent = d.stdout;
+                output.appendChild(span);
+            }
+            if (d.stderr) {
+                const span = document.createElement('span');
+                span.style.color = '#ff4444';
+                span.textContent = d.stderr;
+                output.appendChild(span);
+            }
+            if (!d.stdout && !d.stderr) {
+                output.textContent = '(no output)';
+            }
+        })
+        .catch(err => {
+            output.textContent = 'Error: ' + err.message;
+        });
+    };
+
+    window.createModule = function() {
+        const name = prompt('New module name:');
+        if (!name || !name.trim()) return;
+        fetch('/editor/api/modules/create/' + encodeURIComponent(name.trim()), { method: 'POST' })
+            .then(r => r.json())
+            .then(d => {
+                if (d.ok) {
+                    showToast('Module "' + name.trim() + '" created', 'success');
+                    loadModuleList();
+                } else {
+                    showToast(d.error || 'Failed to create module', 'error');
+                }
+            })
+            .catch(err => showToast('Failed to create module', 'error'));
+    };
+
+    window.createModuleFile = function(moduleName) {
+        const filename = prompt('New filename (e.g. main.py):');
+        if (!filename || !filename.trim()) return;
+        fetch('/editor/api/modules/' + encodeURIComponent(moduleName) + '/files/' + encodeURIComponent(filename.trim()), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ content: '' }),
+        })
+        .then(r => r.json())
+        .then(d => {
+            if (d.ok) {
+                showToast('File created', 'success');
+                loadModuleFiles(moduleName);
+                loadModuleFileContent(moduleName, filename.trim());
+            } else {
+                showToast(d.error || 'Failed to create file', 'error');
+            }
+        })
+        .catch(err => showToast('Failed to create file', 'error'));
+    };
+
+    // ======================================================================
+    // Keyboard shortcut: Ctrl+S saves in current mode
+    // ======================================================================
+    document.addEventListener('keydown', function(e) {
+        if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+            e.preventDefault();
+            if (currentMode === 'portfolio') savePortfolio();
+            else if (currentMode === 'module') saveModuleFile();
+        }
+    });
+})();
 </script>
 {% endblock %}

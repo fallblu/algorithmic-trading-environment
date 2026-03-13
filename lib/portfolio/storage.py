@@ -21,9 +21,7 @@ class PortfolioStorage:
         self._state = state
 
     def _portfolios(self) -> dict:
-        if "portfolios" not in self._state:
-            self._state["portfolios"] = {}
-        return self._state["portfolios"]
+        return self._state.setdefault("portfolios", {})
 
     def list_all(self) -> list[Portfolio]:
         return [Portfolio.from_dict(p) for p in self._portfolios().values()]
@@ -36,11 +34,14 @@ class PortfolioStorage:
 
     def save(self, portfolio: Portfolio) -> None:
         portfolio.updated_at = datetime.now(timezone.utc)
-        self._portfolios()[portfolio.id] = portfolio.to_dict()
+        portfolios = self._portfolios()
+        portfolios[portfolio.id] = portfolio.to_dict()
+        self._state.set("portfolios", portfolios)
 
     def delete(self, portfolio_id: str) -> bool:
         portfolios = self._portfolios()
         if portfolio_id in portfolios:
             del portfolios[portfolio_id]
+            self._state.set("portfolios", portfolios)
             return True
         return False

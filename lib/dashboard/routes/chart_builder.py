@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import logging
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Request
@@ -11,6 +13,7 @@ from fastapi.responses import JSONResponse
 from charts.builder import ChartBuilder, ChartConfig
 from charts.registry import ChartRegistry
 from data.store import MarketDataStore
+from portfolio.storage import PortfolioStorage
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -24,6 +27,41 @@ router = APIRouter()
 async def charts_page(request: Request):
     templates = request.app.state.templates
     return templates.TemplateResponse("chart_builder.html", {"request": request})
+
+
+# ---------------------------------------------------------------------------
+# API — data inventory (exchanges / symbols / timeframes)
+# ---------------------------------------------------------------------------
+
+@router.get("/api/inventory")
+async def get_inventory(request: Request) -> JSONResponse:
+    lib_dir: Path = request.app.state.lib_dir
+    data_dir = lib_dir.parent / "data"
+    try:
+        store = MarketDataStore(data_dir)
+        inventory = store.inventory()
+        return JSONResponse({"inventory": inventory})
+    except Exception as exc:
+        log.exception("Failed to get data inventory")
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+# ---------------------------------------------------------------------------
+# API — portfolio list (for overlay selector)
+# ---------------------------------------------------------------------------
+
+@router.get("/api/portfolios")
+async def list_portfolios(request: Request) -> JSONResponse:
+    state = request.app.state.app_state
+    try:
+        storage = PortfolioStorage(state)
+        portfolios = [
+            {"id": p.id, "name": p.name} for p in storage.list_all()
+        ]
+        return JSONResponse({"portfolios": portfolios})
+    except Exception as exc:
+        log.exception("Failed to list portfolios")
+        return JSONResponse({"error": str(exc)}, status_code=500)
 
 
 # ---------------------------------------------------------------------------
@@ -47,7 +85,16 @@ async def build_chart(request: Request) -> JSONResponse:
 
         store = MarketDataStore(data_dir)
         exchange = body.get("exchange", "kraken")
-        df = store.read_dataframe(exchange, config.symbol, config.timeframe)
+
+        start = None
+        end = None
+        if body.get("start"):
+            start = datetime.fromisoformat(body["start"])
+        if body.get("end"):
+            end = datetime.fromisoformat(body["end"])
+
+        df = store.read_dataframe(exchange, config.symbol, config.timeframe,
+                                  start=start, end=end)
         if df.empty:
             return JSONResponse(
                 {"error": "No data available for the requested symbol/timeframe"},
@@ -70,15 +117,20 @@ async def build_chart(request: Request) -> JSONResponse:
         registry = ChartRegistry(lib_dir)
         registry.discover_all()
         builder = ChartBuilder(registry)
-        html = builder.build(config, df, equity_curve=equity_curve, fills=fills)
-        return JSONResponse({"html": html})
+        fig = builder.build(config, df, equity_curve=equity_curve, fills=fills)
+        fig_dict = json.loads(fig.to_json())
+        return JSONResponse({
+            "data": fig_dict["data"],
+            "layout": fig_dict["layout"],
+            "bars": len(df),
+        })
     except Exception as exc:
         log.exception("Failed to build chart")
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
 # ---------------------------------------------------------------------------
-# Series listing
+# Series listing (indicators only — filter out chart types)
 # ---------------------------------------------------------------------------
 
 @router.get("/api/series")
@@ -87,6 +139,7 @@ async def list_series(request: Request) -> JSONResponse:
     try:
         registry = ChartRegistry(lib_dir)
         all_series = registry.discover_all()
+        hidden = {"price.candlestick", "price.line"}
         return JSONResponse({
             "series": [
                 {
@@ -98,6 +151,7 @@ async def list_series(request: Request) -> JSONResponse:
                     "source": info.source,
                 }
                 for info in all_series.values()
+                if info.key not in hidden
             ],
         })
     except Exception as exc:

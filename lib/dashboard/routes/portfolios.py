@@ -9,8 +9,8 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi import APIRouter, Form, Request
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from portfolio.portfolio import ExecutionMode, Portfolio, StrategyAllocation
 from portfolio.storage import PortfolioStorage
@@ -47,6 +47,38 @@ async def portfolios_page(request: Request):
 
 
 # ---------------------------------------------------------------------------
+# HTMX form handler — returns HTML partial for inline portfolio grid injection
+# ---------------------------------------------------------------------------
+
+@router.post("/portfolios", response_class=HTMLResponse)
+async def create_portfolio_form(
+    request: Request,
+    name: str = Form(...),
+    initial_cash: float = Form(100_000.0),
+    exchange: str = Form("kraken"),
+) -> HTMLResponse:
+    templates = request.app.state.templates
+    state = request.app.state.app_state
+    storage = PortfolioStorage(state)
+    try:
+        portfolio = Portfolio(
+            name=name,
+            mode=ExecutionMode.BACKTEST,
+            strategies=[],
+            initial_cash=initial_cash,
+            exchange=exchange,
+        )
+        storage.save(portfolio)
+        return templates.TemplateResponse(
+            "partials/portfolio_card.html",
+            {"request": request, "portfolio": portfolio.to_dict()},
+        )
+    except Exception as exc:
+        log.exception("Failed to create portfolio from form")
+        return HTMLResponse(f"<div class='text-red-400 p-2'>{exc}</div>", status_code=400)
+
+
+# ---------------------------------------------------------------------------
 # CRUD API
 # ---------------------------------------------------------------------------
 
@@ -74,6 +106,7 @@ async def create_portfolio(request: Request) -> JSONResponse:
             strategies=strategies,
             initial_cash=float(body.get("initial_cash", 10_000.0)),
             orchestration_code=body.get("orchestration_code"),
+            orchestration_params=body.get("orchestration_params", {}),
             exchange=body.get("exchange", "kraken"),
             profile=body.get("profile", "default"),
         )

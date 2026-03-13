@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
 from datetime import datetime, timezone
 
@@ -12,7 +13,11 @@ from models.bar import Bar
 
 log = logging.getLogger(__name__)
 
-BASE_URL = "https://api-fxpractice.oanda.com/v3"
+def _base_url() -> str:
+    env = os.environ.get("OANDA_ENVIRONMENT", "practice")
+    if env == "live":
+        return "https://api-fxtrade.oanda.com/v3"
+    return "https://api-fxpractice.oanda.com/v3"
 
 # OANDA uses underscore-separated symbols
 SYMBOL_MAP = {
@@ -56,7 +61,15 @@ def fetch_candles(
     """Fetch candle data from OANDA REST API.
 
     Returns up to `count` candles (max 5000 per call).
+    Reads OANDA_API_KEY / OANDA_ACCOUNT_ID env vars as fallback.
     """
+    api_key = api_key or os.environ.get("OANDA_API_KEY", "") or os.environ.get("OANDA_API_TOKEN", "")
+    account_id = account_id or os.environ.get("OANDA_ACCOUNT_ID", "")
+    if not api_key:
+        raise ValueError(
+            "OANDA API key required — set OANDA_API_KEY env var or pass api_key"
+        )
+
     instrument = resolve_symbol(symbol)
     granularity = GRANULARITY_MAP.get(timeframe, "H1")
 
@@ -74,7 +87,7 @@ def fetch_candles(
         params["from"] = since.strftime("%Y-%m-%dT%H:%M:%SZ")
         params.pop("count", None)
 
-    url = f"{BASE_URL}/instruments/{instrument}/candles"
+    url = f"{_base_url()}/instruments/{instrument}/candles"
 
     with httpx.Client(timeout=30) as client:
         resp = client.get(url, headers=headers, params=params)

@@ -51,8 +51,8 @@ class ChartBuilder:
         df: pd.DataFrame,
         equity_curve: list[tuple[datetime, float]] | None = None,
         fills: list[Fill] | None = None,
-    ) -> str:
-        """Build a Plotly chart and return HTML div string."""
+    ) -> go.Figure:
+        """Build a Plotly figure from chart configuration."""
         n_subplots = len(config.subplots) + 1
         row_heights = [0.6] + [0.4 / max(len(config.subplots), 1)] * len(config.subplots)
 
@@ -99,13 +99,13 @@ class ChartBuilder:
             paper_bgcolor="#1a1a2e",
             plot_bgcolor="#16213e",
             xaxis_rangeslider_visible=False,
-            height=400 + 200 * len(config.subplots),
+            autosize=True,
             margin=dict(l=50, r=20, t=30, b=30),
             showlegend=True,
             legend=dict(orientation="h", yanchor="bottom", y=1.02),
         )
 
-        return fig.to_html(full_html=False, include_plotlyjs="cdn")
+        return fig
 
     def _add_overlay(
         self,

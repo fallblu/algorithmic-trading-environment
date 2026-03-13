@@ -7,13 +7,13 @@ import logging
 from datetime import datetime
 from pathlib import Path
 
-from persistra import process, state
+from persistra import process
 
 log = logging.getLogger(__name__)
 
 
 @process("job")
-def backtest(portfolio_id: str = "", start: str = "", end: str = ""):
+def run(env, portfolio_id: str = "", start: str = "", end: str = ""):
     """Run a portfolio backtest.
 
     Parameters:
@@ -25,7 +25,7 @@ def backtest(portfolio_id: str = "", start: str = "", end: str = ""):
     from execution.backtest import BacktestContext
     from portfolio.portfolio import Portfolio
 
-    s = state()
+    s = env.state
 
     # Load portfolio
     portfolios = s.get("portfolios", {})
@@ -52,7 +52,7 @@ def backtest(portfolio_id: str = "", start: str = "", end: str = ""):
                 "total": total,
                 "pct": round(bars_done / total * 100, 1) if total > 0 else 0,
             }
-            s["backtest_results"] = results
+            s.set("backtest_results", results)
 
     # Run backtest
     ctx = BacktestContext(portfolio, store)
@@ -76,7 +76,7 @@ def backtest(portfolio_id: str = "", start: str = "", end: str = ""):
             "pct": 100.0,
         },
     }
-    s["backtest_results"] = results
+    s.set("backtest_results", results)
 
     log.info(
         "Backtest complete: %d bars, %d fills, return=%.2f%%",

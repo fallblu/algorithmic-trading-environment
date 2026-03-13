@@ -1,4 +1,4 @@
-"""Editor routes — unified code editor for strategies and user modules."""
+"""Editor routes — unified code editor for strategies, portfolios, and user modules."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 
 from modules.discovery import discover_user_modules
 from modules.loader import ensure_init_file, run_module_file
+from portfolio.storage import PortfolioStorage
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -20,9 +21,56 @@ router = APIRouter()
 # ---------------------------------------------------------------------------
 
 @router.get("/")
-async def editor_page(request: Request):
+async def editor_page(
+    request: Request,
+    portfolio: str | None = None,
+    mode: str = "portfolio",
+):
     templates = request.app.state.templates
-    return templates.TemplateResponse("editor.html", {"request": request})
+    state = request.app.state.app_state
+    lib_dir: Path = request.app.state.lib_dir
+
+    # Strategy templates
+    tdir = lib_dir / "strategy" / "templates"
+    strategy_templates = sorted(
+        f.stem for f in tdir.glob("*.py") if not f.name.startswith("_")
+    ) if tdir.is_dir() else []
+
+    # Portfolios for dropdown
+    storage = PortfolioStorage(state)
+    portfolios = [p.to_dict() for p in storage.list_all()]
+
+    # If portfolio query param, find and preselect it
+    initial_portfolio = None
+    if portfolio:
+        for p in portfolios:
+            if p["name"] == portfolio:
+                initial_portfolio = p
+                mode = "portfolio"
+                break
+
+    return templates.TemplateResponse("editor.html", {
+        "request": request,
+        "templates": strategy_templates,
+        "portfolios": portfolios,
+        "initial_portfolio": initial_portfolio,
+        "initial_mode": mode,
+        "active_page": "editor",
+    })
+
+
+# ---------------------------------------------------------------------------
+# Portfolio lookup by name (portfolio cards link by name)
+# ---------------------------------------------------------------------------
+
+@router.get("/api/portfolio-by-name/{name}")
+async def get_portfolio_by_name(name: str, request: Request) -> JSONResponse:
+    state = request.app.state.app_state
+    storage = PortfolioStorage(state)
+    for p in storage.list_all():
+        if p.name == name:
+            return JSONResponse(p.to_dict())
+    return JSONResponse({"error": "Portfolio not found"}, status_code=404)
 
 
 # ---------------------------------------------------------------------------

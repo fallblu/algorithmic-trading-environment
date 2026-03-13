@@ -6,8 +6,8 @@ import logging
 import threading
 from pathlib import Path
 
-from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Form, Request
+from fastapi.responses import HTMLResponse, JSONResponse
 
 from data.store import MarketDataStore
 
@@ -79,39 +79,65 @@ def _run_download(
 
 
 @router.post("/api/download")
-async def start_download(request: Request) -> JSONResponse:
+async def start_download(
+    request: Request,
+    exchange: str = Form("kraken"),
+    symbols: str = Form("BTC/USD"),
+    timeframe: str = Form("1h"),
+) -> HTMLResponse:
     try:
-        body = await request.json()
-        exchange = body.get("exchange", "kraken")
-        symbol = body.get("symbol", "BTC/USD")
-        timeframe = body.get("timeframe", "1h")
-
         state = request.app.state.app_state
         jobs: dict = state.setdefault("download_jobs", {})
-        job_id = f"{exchange}_{symbol.replace('/', '_')}_{timeframe}"
+        symbol_list = [s.strip() for s in symbols.split(",") if s.strip()]
 
-        jobs[job_id] = {
-            "status": "running",
-            "exchange": exchange,
-            "symbol": symbol,
-            "timeframe": timeframe,
-        }
+        if not symbol_list:
+            return HTMLResponse(
+                '<p class="text-red-400">No symbols provided</p>',
+                status_code=400,
+            )
 
-        thread = threading.Thread(
-            target=_run_download,
-            args=(_data_dir(request), exchange, symbol, timeframe, jobs, job_id),
-            daemon=True,
+        data_dir = _data_dir(request)
+        for symbol in symbol_list:
+            job_id = f"{exchange}_{symbol.replace('/', '_')}_{timeframe}"
+            jobs[job_id] = {
+                "status": "running",
+                "exchange": exchange,
+                "symbol": symbol,
+                "timeframe": timeframe,
+            }
+            thread = threading.Thread(
+                target=_run_download,
+                args=(data_dir, exchange, symbol, timeframe, jobs, job_id),
+                daemon=True,
+            )
+            thread.start()
+
+        sym_display = ", ".join(symbol_list)
+        return HTMLResponse(
+            f'<p class="text-green-400">Download started for '
+            f'{exchange} {sym_display} {timeframe}...</p>'
         )
-        thread.start()
-        return JSONResponse({"job_id": job_id, "status": "started"})
     except Exception as exc:
         log.exception("Failed to start download")
-        return JSONResponse({"error": str(exc)}, status_code=500)
+        return HTMLResponse(
+            f'<p class="text-red-400">Error: {exc}</p>',
+            status_code=500,
+        )
 
 
 # ---------------------------------------------------------------------------
-# HTMX partial — inventory table
+# HTMX partial — inventory tree
 # ---------------------------------------------------------------------------
+
+def _build_inventory_tree(inventory: list[dict]) -> dict:
+    """Group flat inventory list into {exchange: {symbol: [items]}}."""
+    tree: dict[str, dict[str, list[dict]]] = {}
+    for item in inventory:
+        ex = item["exchange"]
+        sym = item["symbol"]
+        tree.setdefault(ex, {}).setdefault(sym, []).append(item)
+    return tree
+
 
 @router.get("/partials/inventory")
 async def inventory_partial(request: Request):
@@ -122,7 +148,8 @@ async def inventory_partial(request: Request):
     except Exception:
         log.exception("Failed to get inventory for partial")
         inventory = []
+    tree = _build_inventory_tree(inventory)
     return templates.TemplateResponse(
         "partials/data_inventory.html",
-        {"request": request, "inventory": inventory},
+        {"request": request, "inventory": inventory, "tree": tree},
     )

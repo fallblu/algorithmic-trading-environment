@@ -6,13 +6,13 @@ import asyncio
 import logging
 from pathlib import Path
 
-from persistra import process, state
+from persistra import process
 
 log = logging.getLogger(__name__)
 
 
 @process("daemon")
-def paper_trader(portfolio_id: str = "", api_key: str = "", account_id: str = ""):
+def run(env, portfolio_id: str = "", api_key: str = "", account_id: str = ""):
     """Run paper trading for a portfolio.
 
     Parameters:
@@ -23,7 +23,7 @@ def paper_trader(portfolio_id: str = "", api_key: str = "", account_id: str = ""
     from execution.paper import PaperContext
     from portfolio.portfolio import Portfolio
 
-    s = state()
+    s = env.state
 
     portfolios = s.get("portfolios", {})
     if portfolio_id not in portfolios:
@@ -45,7 +45,7 @@ def paper_trader(portfolio_id: str = "", api_key: str = "", account_id: str = ""
                 "timestamp": fill.timestamp.isoformat(),
             })
             active[portfolio_id]["recent_fills"] = fills[-50:]  # keep last 50
-            s["active_processes"] = active
+            s.set("active_processes", active)
 
     def on_error(msg):
         log.error("Paper trading error: %s", msg)
@@ -54,13 +54,13 @@ def paper_trader(portfolio_id: str = "", api_key: str = "", account_id: str = ""
             errors = active[portfolio_id].get("errors", [])
             errors.append(msg)
             active[portfolio_id]["errors"] = errors[-20:]
-            s["active_processes"] = active
+            s.set("active_processes", active)
 
     def on_status_change(status):
         active = s.get("active_processes", {})
         if portfolio_id in active:
             active[portfolio_id]["connection_status"] = status
-            s["active_processes"] = active
+            s.set("active_processes", active)
 
     # Register in active processes
     active = s.get("active_processes", {})

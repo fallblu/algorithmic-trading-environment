@@ -371,6 +371,34 @@ tbody tr:hover {
   background: #16213e;
 }
 
+/* --- Editor Split Layout --- */
+.form-panel {
+  width: 350px;
+  min-width: 350px;
+  background: #16213e;
+}
+
+.strategy-card {
+  background: #1a1a2e;
+  border: 1px solid #0f3460;
+  border-radius: 6px;
+  padding: 0.75rem;
+  margin-bottom: 0.75rem;
+  transition: border-color 0.2s ease;
+}
+
+.strategy-card.active {
+  border-color: #4287f5;
+}
+
+.strategy-card:hover {
+  border-color: #1a4a8a;
+}
+
+.allocation-warning {
+  color: #ffd700;
+}
+
 /* --- File Tree Sidebar --- */
 .file-tree {
   background: #16213e;
@@ -631,6 +659,206 @@ tbody tr:hover {
 
 ::-webkit-scrollbar-thumb:hover {
   background: #1a4a8a;
+}
+
+/* --- Portfolio Sub-tabs --- */
+.portfolio-subtab {
+  cursor: pointer;
+  transition: color 0.2s ease, border-color 0.2s ease;
+}
+
+.portfolio-subtab:hover {
+  color: #e2e8f0;
+}
+
+/* --- Chart Toolbar --- */
+.chart-toolbar {
+  background: #16213e;
+  border-bottom: 1px solid #0f3460;
+  padding: 0.45rem 1rem;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  z-index: 10;
+}
+
+.toolbar-select {
+  background: #1a1a2e;
+  color: #e2e8f0;
+  border: 1px solid #0f3460;
+  border-radius: 4px;
+  padding: 0.3rem 0.5rem;
+  font-size: 0.75rem;
+  width: auto;
+  min-width: 90px;
+  cursor: pointer;
+}
+
+.toolbar-select:focus {
+  border-color: #4287f5;
+  outline: none;
+}
+
+.toolbar-date {
+  background: #1a1a2e;
+  color: #e2e8f0;
+  border: 1px solid #0f3460;
+  border-radius: 4px;
+  padding: 0.25rem 0.4rem;
+  font-size: 0.7rem;
+  width: auto;
+}
+
+.toolbar-date:focus {
+  border-color: #4287f5;
+  outline: none;
+}
+
+.toolbar-btn {
+  background: #1a1a2e;
+  color: #a0aec0;
+  border: 1px solid #0f3460;
+  border-radius: 4px;
+  padding: 0.3rem 0.65rem;
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.toolbar-btn:hover {
+  color: #e2e8f0;
+  border-color: #4287f5;
+}
+
+.toolbar-divider {
+  width: 1px;
+  height: 20px;
+  background: #0f3460;
+  margin: 0 0.15rem;
+  flex-shrink: 0;
+}
+
+/* Timeframe pills */
+.tf-pill {
+  background: transparent;
+  color: #a0aec0;
+  border: none;
+  border-radius: 3px;
+  padding: 0.2rem 0.55rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.tf-pill:hover {
+  background: rgba(66, 135, 245, 0.15);
+  color: #e2e8f0;
+}
+
+.tf-pill.active {
+  background: #0f3460;
+  color: #e2e8f0;
+}
+
+/* Chart type buttons */
+.chart-type-btn {
+  background: transparent;
+  color: #a0aec0;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 0.25rem 0.35rem;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.chart-type-btn:hover {
+  color: #e2e8f0;
+}
+
+.chart-type-btn.active {
+  color: #e2e8f0;
+  border-color: #4287f5;
+  background: rgba(66, 135, 245, 0.12);
+}
+
+/* Indicator badge */
+.indicator-badge {
+  background: #4287f5;
+  color: #fff;
+  font-size: 0.6rem;
+  font-weight: 700;
+  padding: 0.05rem 0.35rem;
+  border-radius: 8px;
+  margin-left: 0.25rem;
+  vertical-align: middle;
+}
+
+/* Indicator / layout popover */
+.indicator-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  background: #16213e;
+  border: 1px solid #0f3460;
+  border-radius: 6px;
+  padding: 0.75rem;
+  min-width: 200px;
+  max-height: 380px;
+  overflow-y: auto;
+  z-index: 100;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+}
+
+.indicator-item {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.25rem 0.25rem;
+  font-size: 0.8rem;
+  color: #a0aec0;
+  cursor: pointer;
+  border-radius: 3px;
+  transition: background 0.12s;
+}
+
+.indicator-item:hover {
+  background: rgba(15, 52, 96, 0.4);
+  color: #e2e8f0;
+}
+
+.indicator-item input[type="checkbox"] {
+  accent-color: #4287f5;
+  width: auto;
+}
+
+/* Layout list items */
+.layout-item {
+  padding: 0.3rem 0.4rem;
+  font-size: 0.8rem;
+  color: #a0aec0;
+  cursor: pointer;
+  border-radius: 3px;
+  transition: background 0.12s;
+}
+
+.layout-item:hover {
+  background: rgba(15, 52, 96, 0.4);
+  color: #e2e8f0;
+}
+
+/* Loading spinner */
+.chart-spinner {
+  animation: spin 0.8s linear infinite;
+  color: #4287f5;
+  flex-shrink: 0;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 /* --- Global Transitions --- */

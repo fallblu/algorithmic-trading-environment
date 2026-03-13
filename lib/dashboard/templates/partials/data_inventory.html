@@ -1,13 +1,35 @@
-{% for item in inventory|default([]) %}
-<tr class="border-b border-gray-700 hover:bg-gray-800">
-    <td class="px-4 py-2 text-gray-200">{{ item.exchange }}</td>
-    <td class="px-4 py-2 text-gray-200">{{ item.symbol }}</td>
-    <td class="px-4 py-2 text-gray-200">{{ item.timeframe }}</td>
-    <td class="px-4 py-2 text-gray-200">{{ item.rows }}</td>
-    <td class="px-4 py-2 text-gray-400">{{ item.start_date }} — {{ item.end_date }}</td>
-</tr>
-{% else %}
-<tr>
-    <td colspan="5" class="px-4 py-4 text-center text-gray-500">No data available. Download some data to get started.</td>
-</tr>
+{% if tree %}
+{% for exchange, symbols in tree.items()|sort %}
+<div class="mb-2">
+    <div class="flex items-center gap-2 px-3 py-1.5 text-sm font-semibold text-gray-300 cursor-pointer hover:bg-gray-800 rounded"
+         onclick="this.nextElementSibling.classList.toggle('hidden'); this.querySelector('.chevron').classList.toggle('rotate-90')">
+        <span class="chevron text-gray-500 text-xs inline-block transition-transform duration-150">&#9656;</span>
+        <span>{{ exchange }}</span>
+        <span class="text-xs text-gray-500 ml-auto">{{ symbols|length }} symbol{{ 's' if symbols|length != 1 }}</span>
+    </div>
+    <div class="ml-4 hidden">
+        {% for symbol, items in symbols.items()|sort %}
+        <div class="mb-1">
+            <div class="flex items-center gap-2 px-3 py-1 text-sm text-gray-400 cursor-pointer hover:bg-gray-800 rounded"
+                 onclick="this.nextElementSibling.classList.toggle('hidden'); this.querySelector('.chevron').classList.toggle('rotate-90')">
+                <span class="chevron text-gray-600 text-xs inline-block transition-transform duration-150">&#9656;</span>
+                <span class="text-gray-200">{{ symbol }}</span>
+                <span class="text-xs text-gray-600">{{ items|length }} tf</span>
+            </div>
+            <div class="ml-6 hidden">
+                {% for item in items %}
+                <div class="flex items-center gap-3 px-3 py-0.5 text-xs text-gray-400 hover:bg-gray-800 rounded">
+                    <span class="text-gray-300 font-mono w-8">{{ item.timeframe }}</span>
+                    <span class="text-gray-500">{{ "{:,}".format(item.rows) }} bars</span>
+                    <span class="text-gray-600 ml-auto">{{ item.start[:10] if item.start else '?' }} — {{ item.end[:10] if item.end else '?' }}</span>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
 {% endfor %}
+{% else %}
+<div class="px-4 py-4 text-center text-gray-500 text-sm">No data available. Download some data to get started.</div>
+{% endif %}

@@ -6,13 +6,14 @@ import asyncio
 import logging
 from pathlib import Path
 
-from persistra import process, state
+from persistra import process
 
 log = logging.getLogger(__name__)
 
 
 @process("service")
-def live_trader(
+def run(
+    env,
     portfolio_id: str = "",
     api_key: str = "",
     api_secret: str = "",
@@ -31,7 +32,7 @@ def live_trader(
     from execution.live import LiveContext
     from portfolio.portfolio import Portfolio
 
-    s = state()
+    s = env.state
 
     portfolios = s.get("portfolios", {})
     if portfolio_id not in portfolios:
@@ -59,7 +60,7 @@ def live_trader(
                 "timestamp": fill.timestamp.isoformat(),
             })
             active[portfolio_id]["recent_fills"] = fills[-50:]
-            s["active_processes"] = active
+            s.set("active_processes", active)
 
     def on_error(msg):
         log.error("Live trading error: %s", msg)
@@ -68,13 +69,13 @@ def live_trader(
             errors = active[portfolio_id].get("errors", [])
             errors.append(msg)
             active[portfolio_id]["errors"] = errors[-20:]
-            s["active_processes"] = active
+            s.set("active_processes", active)
 
     def on_status_change(status):
         active = s.get("active_processes", {})
         if portfolio_id in active:
             active[portfolio_id]["connection_status"] = status
-            s["active_processes"] = active
+            s.set("active_processes", active)
 
     # Register in active processes
     active = s.get("active_processes", {})
