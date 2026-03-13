@@ -1,0 +1,29 @@
+<div class="card rounded-lg p-4">
+    <div class="flex items-center justify-between mb-3">
+        <h3 class="text-base font-bold text-white truncate">{{ portfolio.name }}</h3>
+        <span class="text-xs font-medium px-2 py-0.5 rounded
+            {% if portfolio.mode == 'live' %}bg-green-600 text-white
+            {% elif portfolio.mode == 'paper' %}bg-yellow-600 text-white
+            {% else %}bg-gray-600 text-gray-200{% endif %}">
+            {{ portfolio.mode|default('backtest')|capitalize }}
+        </span>
+    </div>
+    <div class="text-sm text-gray-400 space-y-1 mb-4">
+        <div class="flex justify-between">
+            <span>Strategies</span>
+            <span class="text-gray-200">{{ portfolio.strategies|default([])|length }}</span>
+        </div>
+        <div class="flex justify-between">
+            <span>Exchange</span>
+            <span class="text-gray-200">{{ portfolio.exchange|default('—') }}</span>
+        </div>
+    </div>
+    <div class="flex items-center space-x-2">
+        <a href="/monitoring?portfolio={{ portfolio.name }}"
+           class="flex-1 text-center bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded text-xs font-medium">Monitor</a>
+        <a href="/editor?portfolio={{ portfolio.name }}"
+           class="flex-1 text-center bg-gray-600 hover:bg-gray-500 text-white px-3 py-1.5 rounded text-xs font-medium">Edit</a>
+        <button onclick="deletePortfolio('{{ portfolio.name }}')"
+                class="text-red-400 hover:text-red-300 px-2 py-1.5 text-xs">&times;</button>
+    </div>
+</div>

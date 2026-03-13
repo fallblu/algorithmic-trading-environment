@@ -1,209 +1,186 @@
-"""OANDA streaming price feed — real-time tick data via HTTP streaming."""
+"""OANDA streaming API — real-time price quote feed with auto-reconnect."""
 
+from __future__ import annotations
+
+import asyncio
 import json
 import logging
-import os
-import threading
 from datetime import datetime, timezone
-from decimal import Decimal
+from typing import Callable
 
-from constants import normalize_symbol, denormalize_symbol
+import httpx
+
 from models.bar import Bar
 
 log = logging.getLogger(__name__)
 
+STREAM_URL = "https://stream-fxpractice.oanda.com/v3"
+
 
 class OandaStream:
-    """Connects to OANDA streaming API for real-time price ticks.
+    """OANDA streaming API client for real-time price quotes.
 
-    Aggregates ticks into OHLCV bars at the configured timeframe.
-    Optionally records raw tick data to Parquet.
+    OANDA streams individual price ticks. This client aggregates them
+    into OHLCV bars at the configured interval.
+
+    Features:
+    - Auto-reconnect with exponential backoff
+    - Connection status tracking
+    - Tick-to-bar aggregation
     """
 
     def __init__(
         self,
-        instruments: list[str],
+        symbols: list[str],
+        api_key: str,
+        account_id: str,
         timeframe: str = "1m",
-        record_ticks: bool = False,
-    ):
-        self._instruments = instruments
+        on_bar: Callable[[Bar], None] | None = None,
+        on_status_change: Callable[[str], None] | None = None,
+        max_retries: int = 20,
+    ) -> None:
+        self._symbols = symbols
+        self._api_key = api_key
+        self._account_id = account_id
         self._timeframe = timeframe
-        self._record_ticks = record_ticks
+        self._on_bar = on_bar
+        self._on_status_change = on_status_change
+        self._max_retries = max_retries
+        self._backoff_schedule = [1, 2, 4, 8, 16, 32, 60]
+        self._retry_count = 0
+        self._status = "disconnected"
         self._running = False
-        self._thread: threading.Thread | None = None
-        self._bar_callbacks: list = []
-        self._tick_callbacks: list = []
 
-        # Current bar state per instrument
+        # Bar aggregation state per symbol
         self._current_bars: dict[str, dict] = {}
-        self._bar_start_times: dict[str, datetime] = {}
+        self._interval_seconds = self._parse_interval(timeframe)
 
-        self._timeframe_seconds = {
-            "1m": 60, "5m": 300, "15m": 900, "30m": 1800,
-            "1h": 3600, "4h": 14400, "1d": 86400,
-        }.get(timeframe, 60)
+    @property
+    def connection_status(self) -> str:
+        return self._status
 
-    def on_bar(self, callback) -> None:
-        """Register a callback for completed bars."""
-        self._bar_callbacks.append(callback)
+    def _set_status(self, status: str) -> None:
+        self._status = status
+        if self._on_status_change:
+            self._on_status_change(status)
 
-    def on_tick(self, callback) -> None:
-        """Register a callback for raw ticks."""
-        self._tick_callbacks.append(callback)
+    def _parse_interval(self, tf: str) -> int:
+        mapping = {"1m": 60, "5m": 300, "15m": 900, "30m": 1800, "1h": 3600, "4h": 14400}
+        return mapping.get(tf, 60)
 
-    def start(self) -> None:
-        """Start streaming in a background thread."""
-        if self._running:
-            return
-
+    async def connect(self) -> None:
+        """Connect and start receiving prices. Reconnects on failure."""
         self._running = True
-        self._thread = threading.Thread(
-            target=self._stream_loop, name="OandaStream", daemon=True
-        )
-        self._thread.start()
-        log.info("OANDA stream started for %s", self._instruments)
-
-    def stop(self) -> None:
-        """Stop streaming."""
-        self._running = False
-        if self._thread is not None:
-            self._thread.join(timeout=5.0)
-            self._thread = None
-        log.info("OANDA stream stopped")
-
-    def _stream_loop(self) -> None:
-        """Main streaming loop with reconnection."""
-        import httpx
-
-        environment = os.environ.get("OANDA_ENVIRONMENT", "practice")
-        if environment == "live":
-            stream_url = "https://stream-fxtrade.oanda.com"
-        else:
-            stream_url = "https://stream-fxpractice.oanda.com"
-
-        token = os.environ.get("OANDA_API_TOKEN", "")
-        account_id = os.environ.get("OANDA_ACCOUNT_ID", "")
-
-        oanda_instruments = ",".join(normalize_symbol(s) for s in self._instruments)
-        url = f"{stream_url}/v3/accounts/{account_id}/pricing/stream"
-
-        delay = 1.0
         while self._running:
             try:
-                with httpx.stream(
-                    "GET", url,
-                    params={"instruments": oanda_instruments},
-                    headers={"Authorization": f"Bearer {token}"},
-                    timeout=httpx.Timeout(30.0, read=None),
-                ) as response:
-                    delay = 1.0  # Reset on successful connect
-                    for line in response.iter_lines():
-                        if not self._running:
-                            break
-                        if line:
-                            self._process_message(line)
-
-            except Exception as e:
+                await self._connect_and_stream()
+            except (httpx.HTTPError, OSError, Exception) as e:
                 if not self._running:
                     break
-                log.warning("OANDA stream error (%s). Reconnecting in %.1fs...", e, delay)
-                import time
-                time.sleep(delay)
-                delay = min(delay * 2, 60.0)
+                self._retry_count += 1
+                if self._retry_count > self._max_retries:
+                    log.error("Max retries (%d) reached", self._max_retries)
+                    self._set_status("disconnected")
+                    break
 
-    def _process_message(self, line: str) -> None:
-        """Parse a streaming JSON message."""
-        try:
-            msg = json.loads(line)
-        except json.JSONDecodeError:
-            return
-
-        msg_type = msg.get("type")
-
-        if msg_type == "HEARTBEAT":
-            return
-
-        if msg_type == "PRICE":
-            self._process_tick(msg)
-
-    def _process_tick(self, msg: dict) -> None:
-        """Process a price tick and aggregate into bars."""
-        oanda_instrument = msg.get("instrument", "")
-        our_symbol = denormalize_symbol(oanda_instrument)
-
-        bids = msg.get("bids", [])
-        asks = msg.get("asks", [])
-        if not bids or not asks:
-            return
-
-        bid = Decimal(bids[0]["price"])
-        ask = Decimal(asks[0]["price"])
-        mid = (bid + ask) / 2
-        spread = ask - bid
-
-        ts = datetime.fromisoformat(msg["time"].replace("Z", "+00:00"))
-
-        tick = {
-            "timestamp": ts,
-            "symbol": our_symbol,
-            "bid": bid,
-            "ask": ask,
-            "mid": mid,
-            "spread": spread,
-        }
-
-        # Notify tick callbacks
-        for cb in self._tick_callbacks:
-            try:
-                cb(tick)
-            except Exception:
-                log.exception("Error in tick callback")
-
-        # Aggregate into bar
-        self._aggregate_tick(our_symbol, mid, ts)
-
-    def _aggregate_tick(self, symbol: str, price: Decimal, timestamp: datetime) -> None:
-        """Aggregate a tick into the current bar."""
-        bar_start = self._bar_start_times.get(symbol)
-
-        # Determine bar boundary
-        epoch_seconds = int(timestamp.timestamp())
-        bar_epoch = epoch_seconds - (epoch_seconds % self._timeframe_seconds)
-        bar_boundary = datetime.fromtimestamp(bar_epoch, tz=timezone.utc)
-
-        if bar_start is not None and bar_boundary > bar_start:
-            # New bar period — complete the previous bar
-            current = self._current_bars.get(symbol)
-            if current:
-                bar = Bar(
-                    instrument_symbol=symbol,
-                    timestamp=bar_start,
-                    open=current["open"],
-                    high=current["high"],
-                    low=current["low"],
-                    close=current["close"],
-                    volume=Decimal(str(current["ticks"])),
+                backoff_idx = min(self._retry_count - 1, len(self._backoff_schedule) - 1)
+                delay = self._backoff_schedule[backoff_idx]
+                log.warning(
+                    "OANDA stream disconnected (%s), reconnecting in %ds (attempt %d/%d)",
+                    e, delay, self._retry_count, self._max_retries,
                 )
-                for cb in self._bar_callbacks:
-                    try:
-                        cb(bar)
-                    except Exception:
-                        log.exception("Error in bar callback")
+                self._set_status("reconnecting")
+                await asyncio.sleep(delay)
 
-        if bar_start is None or bar_boundary > bar_start:
+    async def _connect_and_stream(self) -> None:
+        """Establish streaming connection and process price updates."""
+        instruments = ",".join(s.replace("/", "_") for s in self._symbols)
+        url = f"{STREAM_URL}/accounts/{self._account_id}/pricing/stream"
+        headers = {"Authorization": f"Bearer {self._api_key}"}
+        params = {"instruments": instruments}
+
+        async with httpx.AsyncClient(timeout=None) as client:
+            async with client.stream("GET", url, headers=headers, params=params) as resp:
+                resp.raise_for_status()
+                self._set_status("connected")
+                self._retry_count = 0
+                log.info("Connected to OANDA price stream")
+
+                async for line in resp.aiter_lines():
+                    if not self._running:
+                        break
+                    if not line.strip():
+                        continue
+                    try:
+                        data = json.loads(line)
+                        self._process_tick(data)
+                    except json.JSONDecodeError:
+                        continue
+
+    def _process_tick(self, data: dict) -> None:
+        """Process a price tick and aggregate into bars."""
+        if data.get("type") != "PRICE":
+            return
+
+        instrument = data.get("instrument", "").replace("_", "/")
+        if instrument not in self._symbols:
+            return
+
+        try:
+            # Use mid price (average of bid and ask)
+            bids = data.get("bids", [{}])
+            asks = data.get("asks", [{}])
+            bid = float(bids[0].get("price", 0))
+            ask = float(asks[0].get("price", 0))
+            mid = (bid + ask) / 2
+            ts = datetime.fromisoformat(data["time"].replace("Z", "+00:00"))
+        except (KeyError, ValueError, IndexError):
+            return
+
+        # Determine which bar interval this tick belongs to
+        epoch = int(ts.timestamp())
+        bar_epoch = epoch - (epoch % self._interval_seconds)
+
+        current = self._current_bars.get(instrument)
+
+        if current is None or current["epoch"] != bar_epoch:
+            # Emit previous bar if exists
+            if current is not None:
+                self._emit_bar(instrument, current)
+
             # Start new bar
-            self._current_bars[symbol] = {
-                "open": price,
-                "high": price,
-                "low": price,
-                "close": price,
-                "ticks": 1,
+            self._current_bars[instrument] = {
+                "epoch": bar_epoch,
+                "open": mid,
+                "high": mid,
+                "low": mid,
+                "close": mid,
+                "volume": 0.0,
+                "timestamp": datetime.fromtimestamp(bar_epoch, tz=timezone.utc),
             }
-            self._bar_start_times[symbol] = bar_boundary
         else:
-            # Update current bar
-            current = self._current_bars[symbol]
-            current["high"] = max(current["high"], price)
-            current["low"] = min(current["low"], price)
-            current["close"] = price
-            current["ticks"] += 1
+            current["high"] = max(current["high"], mid)
+            current["low"] = min(current["low"], mid)
+            current["close"] = mid
+            current["volume"] += 1  # Tick count as volume proxy
+
+    def _emit_bar(self, symbol: str, bar_data: dict) -> None:
+        bar = Bar(
+            symbol=symbol,
+            timestamp=bar_data["timestamp"],
+            open=bar_data["open"],
+            high=bar_data["high"],
+            low=bar_data["low"],
+            close=bar_data["close"],
+            volume=bar_data["volume"],
+        )
+        if self._on_bar:
+            self._on_bar(bar)
+
+    async def disconnect(self) -> None:
+        self._running = False
+        # Emit any remaining bars
+        for symbol, bar_data in self._current_bars.items():
+            self._emit_bar(symbol, bar_data)
+        self._current_bars.clear()
+        self._set_status("disconnected")

@@ -1,181 +1,237 @@
-"""Tests for core data models."""
+from __future__ import annotations
 
+import dataclasses
 from datetime import datetime, timezone
-from decimal import Decimal
+
+import pytest
 
 from models.bar import Bar
+from models.order import Order, OrderSide, OrderStatus, OrderType
 from models.fill import Fill
-from models.instrument import Instrument
-from models.order import Order, OrderSide, OrderType, OrderStatus, TimeInForce
-from models.position import Position
-from models.account import Account
+from models.position import Position, PositionSide
+from models.instrument import Instrument, get_instrument
 
+
+# ---------------------------------------------------------------------------
+# Bar
+# ---------------------------------------------------------------------------
 
 class TestBar:
-    def test_creation(self):
+    def test_bar_creation(self):
+        ts = datetime(2024, 1, 1, tzinfo=timezone.utc)
         bar = Bar(
-            instrument_symbol="BTC/USD",
-            timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
-            open=Decimal("50000"),
-            high=Decimal("50500"),
-            low=Decimal("49500"),
-            close=Decimal("50200"),
-            volume=Decimal("100"),
+            symbol="BTC/USD",
+            timestamp=ts,
+            open=42000.0,
+            high=42500.0,
+            low=41800.0,
+            close=42200.0,
+            volume=100.0,
         )
-        assert bar.instrument_symbol == "BTC/USD"
-        assert bar.close == Decimal("50200")
-        assert bar.trades is None
-        assert bar.vwap is None
+        assert bar.symbol == "BTC/USD"
+        assert bar.timestamp == ts
+        assert bar.open == 42000.0
+        assert bar.high == 42500.0
+        assert bar.low == 41800.0
+        assert bar.close == 42200.0
+        assert bar.volume == 100.0
 
-    def test_frozen(self):
+    def test_bar_frozen_immutability(self):
+        ts = datetime(2024, 1, 1, tzinfo=timezone.utc)
         bar = Bar(
-            instrument_symbol="BTC/USD",
-            timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
-            open=Decimal("50000"), high=Decimal("50500"),
-            low=Decimal("49500"), close=Decimal("50200"),
-            volume=Decimal("100"),
+            symbol="BTC/USD",
+            timestamp=ts,
+            open=42000.0,
+            high=42500.0,
+            low=41800.0,
+            close=42200.0,
+            volume=100.0,
         )
-        try:
-            bar.close = Decimal("99999")
-            assert False, "Should not allow mutation"
-        except AttributeError:
-            pass
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            bar.close = 99999.0
+
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            bar.symbol = "ETH/USD"
 
 
-class TestInstrument:
-    def test_creation(self, btc_instrument):
-        assert btc_instrument.symbol == "BTC/USD"
-        assert btc_instrument.base == "BTC"
-        assert btc_instrument.quote == "USD"
-        assert btc_instrument.exchange == "kraken"
-
-    def test_frozen(self, btc_instrument):
-        try:
-            btc_instrument.symbol = "ETH/USD"
-            assert False, "Should not allow mutation"
-        except AttributeError:
-            pass
-
+# ---------------------------------------------------------------------------
+# Order
+# ---------------------------------------------------------------------------
 
 class TestOrder:
-    def test_market_order(self, btc_instrument):
+    def test_order_creation_with_defaults(self):
         order = Order(
-            instrument=btc_instrument,
+            symbol="ETH/USD",
             side=OrderSide.BUY,
             type=OrderType.MARKET,
-            quantity=Decimal("0.1"),
-            strategy_id="test",
+            quantity=1.5,
         )
+        assert order.symbol == "ETH/USD"
         assert order.side == OrderSide.BUY
         assert order.type == OrderType.MARKET
-        assert order.quantity == Decimal("0.1")
-        assert order.status == OrderStatus.PENDING
+        assert order.quantity == 1.5
         assert order.price is None
-        assert order.tif == TimeInForce.GTC
-        assert order.id  # UUID generated
+        assert order.status == OrderStatus.PENDING
+        assert order.filled_quantity == 0.0
+        assert order.fill_price is None
+        assert order.strategy_id == ""
+        assert order.id  # non-empty uuid
+        assert order.created_at.tzinfo is not None  # timezone-aware
 
-    def test_limit_order(self, btc_instrument):
+    def test_order_side_enum(self):
+        assert OrderSide.BUY.value == "BUY"
+        assert OrderSide.SELL.value == "SELL"
+        assert OrderSide("BUY") is OrderSide.BUY
+
+    def test_order_type_enum(self):
+        assert OrderType.MARKET.value == "MARKET"
+        assert OrderType.LIMIT.value == "LIMIT"
+        assert OrderType("LIMIT") is OrderType.LIMIT
+
+    def test_order_with_limit_price(self):
         order = Order(
-            instrument=btc_instrument,
+            symbol="BTC/USD",
             side=OrderSide.SELL,
             type=OrderType.LIMIT,
-            quantity=Decimal("0.5"),
-            price=Decimal("55000"),
-            strategy_id="test",
+            quantity=0.5,
+            price=50000.0,
         )
-        assert order.price == Decimal("55000")
+        assert order.price == 50000.0
         assert order.type == OrderType.LIMIT
+        assert order.side == OrderSide.SELL
 
-    def test_stop_order(self, btc_instrument):
-        order = Order(
-            instrument=btc_instrument,
-            side=OrderSide.SELL,
-            type=OrderType.STOP,
-            quantity=Decimal("0.1"),
-            stop_price=Decimal("48000"),
-            strategy_id="test",
-        )
-        assert order.stop_price == Decimal("48000")
-
-    def test_unique_ids(self, btc_instrument):
-        o1 = Order(instrument=btc_instrument, side=OrderSide.BUY,
-                   type=OrderType.MARKET, quantity=Decimal("1"))
-        o2 = Order(instrument=btc_instrument, side=OrderSide.BUY,
-                   type=OrderType.MARKET, quantity=Decimal("1"))
+    def test_order_unique_ids(self):
+        o1 = Order(symbol="BTC/USD", side=OrderSide.BUY, type=OrderType.MARKET, quantity=1.0)
+        o2 = Order(symbol="BTC/USD", side=OrderSide.BUY, type=OrderType.MARKET, quantity=1.0)
         assert o1.id != o2.id
 
 
-class TestFill:
-    def test_creation(self, btc_instrument):
-        fill = Fill(
-            order_id="abc-123",
-            instrument=btc_instrument,
-            side=OrderSide.BUY,
-            quantity=Decimal("0.1"),
-            price=Decimal("50000"),
-            fee=Decimal("5"),
-            fee_currency="USD",
-            timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
-        )
-        assert fill.quantity == Decimal("0.1")
-        assert fill.fee == Decimal("5")
-        assert fill.is_maker is False
-        assert fill.slippage == Decimal("0")
+# ---------------------------------------------------------------------------
+# Fill
+# ---------------------------------------------------------------------------
 
+class TestFill:
+    def test_fill_creation(self):
+        ts = datetime(2024, 6, 15, 12, 0, 0, tzinfo=timezone.utc)
+        fill = Fill(
+            order_id="order-123",
+            symbol="BTC/USD",
+            side=OrderSide.BUY,
+            quantity=0.5,
+            price=42000.0,
+            fee=54.6,
+            timestamp=ts,
+            strategy_id="sma",
+            slippage=4.2,
+        )
+        assert fill.order_id == "order-123"
+        assert fill.symbol == "BTC/USD"
+        assert fill.side == OrderSide.BUY
+        assert fill.quantity == 0.5
+        assert fill.price == 42000.0
+        assert fill.fee == 54.6
+        assert fill.timestamp == ts
+        assert fill.strategy_id == "sma"
+        assert fill.slippage == 4.2
+
+    def test_fill_defaults(self):
+        ts = datetime(2024, 6, 15, tzinfo=timezone.utc)
+        fill = Fill(
+            order_id="o1",
+            symbol="ETH/USD",
+            side=OrderSide.SELL,
+            quantity=10.0,
+            price=3000.0,
+            fee=7.8,
+            timestamp=ts,
+        )
+        assert fill.strategy_id == ""
+        assert fill.slippage == 0.0
+
+    def test_fill_frozen_immutability(self):
+        ts = datetime(2024, 6, 15, tzinfo=timezone.utc)
+        fill = Fill(
+            order_id="o1",
+            symbol="ETH/USD",
+            side=OrderSide.SELL,
+            quantity=10.0,
+            price=3000.0,
+            fee=7.8,
+            timestamp=ts,
+        )
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            fill.price = 9999.0
+
+
+# ---------------------------------------------------------------------------
+# Position
+# ---------------------------------------------------------------------------
 
 class TestPosition:
-    def test_creation(self, btc_instrument):
-        pos = Position(
-            instrument=btc_instrument,
-            side=OrderSide.BUY,
-            quantity=Decimal("0.5"),
-            entry_price=Decimal("50000"),
+    def test_position_creation(self):
+        pos = Position(symbol="BTC/USD", side=PositionSide.LONG, quantity=1.0)
+        assert pos.symbol == "BTC/USD"
+        assert pos.side == PositionSide.LONG
+        assert pos.quantity == 1.0
+        assert pos.avg_entry_price == 0.0
+        assert pos.unrealized_pnl == 0.0
+        assert pos.realized_pnl == 0.0
+        assert pos.strategy_id == ""
+        assert pos.opened_at.tzinfo is not None
+
+    def test_position_side_enum(self):
+        assert PositionSide.LONG.value == "LONG"
+        assert PositionSide.SHORT.value == "SHORT"
+        assert PositionSide.FLAT.value == "FLAT"
+        assert PositionSide("LONG") is PositionSide.LONG
+
+    def test_position_is_mutable(self):
+        pos = Position(symbol="BTC/USD", side=PositionSide.LONG, quantity=1.0)
+        pos.quantity = 2.0
+        assert pos.quantity == 2.0
+        pos.unrealized_pnl = 500.0
+        assert pos.unrealized_pnl == 500.0
+
+
+# ---------------------------------------------------------------------------
+# Instrument
+# ---------------------------------------------------------------------------
+
+class TestInstrument:
+    def test_instrument_creation(self):
+        inst = Instrument(symbol="BTC/USD", exchange="kraken")
+        assert inst.symbol == "BTC/USD"
+        assert inst.exchange == "kraken"
+        assert inst.tick_size == 0.01
+        assert inst.lot_size == 0.001
+        assert inst.min_notional == 10.0
+
+    def test_instrument_custom_params(self):
+        inst = Instrument(
+            symbol="EUR/USD",
+            exchange="oanda",
+            tick_size=0.00001,
+            lot_size=1.0,
+            min_notional=1.0,
         )
-        assert pos.quantity == Decimal("0.5")
-        assert pos.unrealized_pnl == Decimal("0")
+        assert inst.tick_size == 0.00001
+        assert inst.lot_size == 1.0
+        assert inst.min_notional == 1.0
 
-    def test_update_unrealized_pnl_long(self, btc_instrument):
-        pos = Position(
-            instrument=btc_instrument,
-            side=OrderSide.BUY,
-            quantity=Decimal("1"),
-            entry_price=Decimal("50000"),
-        )
-        pos.update_unrealized_pnl(Decimal("52000"))
-        assert pos.unrealized_pnl == Decimal("2000")
+    def test_get_instrument_known_symbol(self):
+        inst = get_instrument("BTC/USD")
+        assert inst.symbol == "BTC/USD"
+        assert inst.exchange == "kraken"
+        assert inst.tick_size == 0.1
 
-    def test_update_unrealized_pnl_short(self, btc_instrument):
-        pos = Position(
-            instrument=btc_instrument,
-            side=OrderSide.SELL,
-            quantity=Decimal("1"),
-            entry_price=Decimal("50000"),
-        )
-        pos.update_unrealized_pnl(Decimal("48000"))
-        assert pos.unrealized_pnl == Decimal("2000")
+    def test_get_instrument_known_forex(self):
+        inst = get_instrument("EUR/USD")
+        assert inst.symbol == "EUR/USD"
+        assert inst.exchange == "oanda"
 
-    def test_to_dict(self, btc_instrument):
-        pos = Position(
-            instrument=btc_instrument,
-            side=OrderSide.BUY,
-            quantity=Decimal("0.5"),
-            entry_price=Decimal("50000"),
-        )
-        d = pos.to_dict()
-        assert d["instrument_symbol"] == "BTC/USD"
-        assert "quantity" in d
-
-
-class TestAccount:
-    def test_defaults(self):
-        acc = Account()
-        assert acc.equity == Decimal("0")
-        assert acc.margin_used == Decimal("0")
-
-    def test_to_dict(self):
-        acc = Account(
-            equity=Decimal("100000"),
-            balances={"USD": Decimal("100000")},
-        )
-        d = acc.to_dict()
-        assert str(d["equity"]) == "100000"
+    def test_get_instrument_unknown_symbol_returns_default(self):
+        inst = get_instrument("UNKNOWN/PAIR")
+        assert inst.symbol == "UNKNOWN/PAIR"
+        # Unknown non-crypto defaults to oanda
+        assert inst.exchange == "oanda"
+        assert inst.tick_size == 0.01  # default

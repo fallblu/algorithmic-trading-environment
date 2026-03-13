@@ -1,59 +1,36 @@
-"""Dashboard process — serves the interactive web dashboard."""
+"""Dashboard process — serve the FastAPI trading dashboard."""
+
+from __future__ import annotations
 
 import logging
-import sys
-import threading
-from pathlib import Path
 
-from persistra import process
+from persistra import process, state
 
 log = logging.getLogger(__name__)
 
-# Module-level state persists between daemon ticks
-_server = None
-_server_thread = None
 
+@process("daemon")
+def dashboard(host: str = "127.0.0.1", port: str = "8050", auth_token: str = ""):
+    """Serve the trading dashboard.
 
-@process("daemon", interval="10s")
-def run(
-    env,
-    host: str = "127.0.0.1",
-    port: int = 8050,
-):
-    """Start the trading dashboard web server.
-
-    Runs as a Persistra daemon process using uvicorn in a background thread.
-    The first tick starts the server; subsequent ticks verify it is still alive.
+    Parameters:
+        host: Bind host (default 127.0.0.1).
+        port: Bind port (default 8050).
+        auth_token: Authentication token (empty = no auth).
     """
-    global _server, _server_thread
+    import uvicorn
+    from pathlib import Path
 
-    # If the server thread is already running, nothing to do.
-    if _server_thread is not None and _server_thread.is_alive():
-        return
-
-    lib_path = str(Path(env.path) / "lib")
-    if lib_path not in sys.path:
-        sys.path.insert(0, lib_path)
-
-    try:
-        import uvicorn
-    except ImportError:
-        log.error("uvicorn not installed. Install with: pip install uvicorn")
-        return
-
-    # The runner registers this file as sys.modules["dashboard"], which shadows
-    # the lib/dashboard package. Remove it so the package import resolves correctly.
-    sys.modules.pop("dashboard", None)
     from dashboard.app import create_app
-    from helpers import market_data_dir
 
-    data_dir = market_data_dir(env.path)
-    app = create_app(env=env, data_dir=data_dir)
+    s = state()
+    lib_dir = Path(__file__).parent.parent / "lib"
 
-    port = int(port)
-    config = uvicorn.Config(app, host=host, port=port, log_level="info")
-    _server = uvicorn.Server(config)
+    app = create_app(
+        state=s,
+        auth_token=auth_token,
+        lib_dir=lib_dir,
+    )
 
-    _server_thread = threading.Thread(target=_server.run, daemon=True)
-    _server_thread.start()
-    log.info("Starting dashboard on %s:%d", host, port)
+    log.info("Starting dashboard on %s:%s", host, port)
+    uvicorn.run(app, host=host, port=int(port), log_level="info")

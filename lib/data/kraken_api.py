@@ -1,43 +1,63 @@
-"""Kraken REST client for OHLCV data backfill."""
+"""Kraken REST API client — fetch OHLCV candle data."""
 
+from __future__ import annotations
+
+import logging
 import time
 from datetime import datetime, timezone
-from decimal import Decimal
 
 import requests
 
-from constants import TIMEFRAME_MINUTES
-from exceptions import KrakenAPIError
 from models.bar import Bar
 
-from data.universe import resolve_kraken_symbol
+log = logging.getLogger(__name__)
 
 BASE_URL = "https://api.kraken.com/0/public"
+
+# Kraken uses non-standard symbol names for the API
+SYMBOL_MAP = {
+    "BTC/USD": "XBTUSD",
+    "ETH/USD": "ETHUSD",
+    "SOL/USD": "SOLUSD",
+    "XRP/USD": "XRPUSD",
+    "ADA/USD": "ADAUSD",
+    "DOT/USD": "DOTUSD",
+    "DOGE/USD": "DOGEUSD",
+    "AVAX/USD": "AVAXUSD",
+    "MATIC/USD": "MATICUSD",
+    "LINK/USD": "LINKUSD",
+}
+
+TIMEFRAME_MINUTES = {
+    "1m": 1,
+    "5m": 5,
+    "15m": 15,
+    "30m": 30,
+    "1h": 60,
+    "4h": 240,
+    "1d": 1440,
+    "1w": 10080,
+}
+
+
+def resolve_symbol(symbol: str) -> str:
+    """Convert normalized symbol to Kraken API format."""
+    return SYMBOL_MAP.get(symbol, symbol.replace("/", ""))
 
 
 def fetch_ohlcv(
     symbol: str,
     timeframe: str = "1h",
     since: datetime | None = None,
-    limit: int | None = None,
 ) -> list[Bar]:
-    """Fetch OHLCV bars from Kraken REST API.
+    """Fetch OHLCV candles from Kraken REST API.
 
-    Args:
-        symbol: Our symbol format, e.g. "BTC/USD"
-        timeframe: One of "1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w"
-        since: Fetch bars starting from this time (UTC)
-        limit: Max bars to return (Kraken returns up to 720 per request)
-
-    Returns:
-        List of Bar objects sorted by timestamp ascending.
+    Returns at most 720 bars per call (Kraken's limit).
     """
-    kraken_pair = resolve_kraken_symbol(symbol)
-    interval = TIMEFRAME_MINUTES.get(timeframe)
-    if interval is None:
-        raise ValueError(f"Unsupported timeframe: {timeframe}")
+    pair = resolve_symbol(symbol)
+    interval = TIMEFRAME_MINUTES.get(timeframe, 60)
 
-    params: dict = {"pair": kraken_pair, "interval": interval}
+    params: dict = {"pair": pair, "interval": interval}
     if since is not None:
         params["since"] = int(since.timestamp())
 
@@ -46,38 +66,25 @@ def fetch_ohlcv(
     data = resp.json()
 
     if data.get("error"):
-        raise KrakenAPIError(f"Kraken API error: {data['error']}")
+        raise RuntimeError(f"Kraken API error: {data['error']}")
 
-    result = data.get("result", {})
-    # Result keys are the Kraken pair name; find the right one (not "last")
-    bars_data = None
-    for key, value in result.items():
-        if key != "last" and isinstance(value, list):
-            bars_data = value
-            break
+    result_key = next(k for k in data["result"] if k != "last")
+    raw_bars = data["result"][result_key]
 
-    if bars_data is None:
-        return []
-
-    bars = []
-    for entry in bars_data:
-        # Kraken OHLC format: [time, open, high, low, close, vwap, volume, count]
-        ts = datetime.fromtimestamp(entry[0], tz=timezone.utc)
+    bars: list[Bar] = []
+    for row in raw_bars:
+        # Kraken format: [time, open, high, low, close, vwap, volume, count]
+        ts = datetime.fromtimestamp(row[0], tz=timezone.utc)
         bars.append(Bar(
-            instrument_symbol=symbol,
+            symbol=symbol,
             timestamp=ts,
-            open=Decimal(entry[1]),
-            high=Decimal(entry[2]),
-            low=Decimal(entry[3]),
-            close=Decimal(entry[4]),
-            volume=Decimal(entry[6]),
-            trades=int(entry[7]),
-            vwap=Decimal(entry[5]) if entry[5] != "0.00000" else None,
+            open=float(row[1]),
+            high=float(row[2]),
+            low=float(row[3]),
+            close=float(row[4]),
+            volume=float(row[6]),
         ))
 
-    bars.sort(key=lambda b: b.timestamp)
-    if limit is not None:
-        bars = bars[:limit]
     return bars
 
 
@@ -88,51 +95,36 @@ def backfill_ohlcv(
     end: datetime | None = None,
     rate_limit_sleep: float = 1.0,
 ) -> list[Bar]:
-    """Backfill historical OHLCV data by paginating through Kraken API.
-
-    Args:
-        symbol: Our symbol format, e.g. "BTC/USD"
-        timeframe: Bar timeframe
-        start: Start of backfill range (UTC)
-        end: End of backfill range (UTC). Defaults to now.
-
-    Returns:
-        All bars in the requested range, deduplicated and sorted.
-    """
-    if end is None:
-        end = datetime.now(timezone.utc)
-
+    """Backfill OHLCV data with pagination. Returns all bars in date range."""
     all_bars: list[Bar] = []
     since = start
 
     while True:
-        batch = fetch_ohlcv(symbol, timeframe, since=since)
+        batch = fetch_ohlcv(symbol, timeframe, since)
         if not batch:
             break
 
-        # Filter to requested range
-        for bar in batch:
-            if end is not None and bar.timestamp > end:
-                continue
-            all_bars.append(bar)
+        # Filter by end date
+        if end is not None:
+            batch = [b for b in batch if b.timestamp <= end]
 
-        # Kraken returns bars from `since` onward; advance past last bar
-        last_ts = batch[-1].timestamp
-        if since is not None and last_ts <= since:
-            break  # No progress, we've exhausted available data
-        if end is not None and last_ts >= end:
+        all_bars.extend(batch)
+        log.info("Fetched %d bars for %s (total: %d)", len(batch), symbol, len(all_bars))
+
+        if len(batch) < 700:  # Less than Kraken's max = no more data
             break
 
-        since = last_ts
+        # Move since to last bar's timestamp
+        since = batch[-1].timestamp
+
         time.sleep(rate_limit_sleep)
 
     # Deduplicate by timestamp
-    seen = set()
-    unique_bars = []
+    seen: set[datetime] = set()
+    unique: list[Bar] = []
     for bar in all_bars:
         if bar.timestamp not in seen:
             seen.add(bar.timestamp)
-            unique_bars.append(bar)
+            unique.append(bar)
 
-    unique_bars.sort(key=lambda b: b.timestamp)
-    return unique_bars
+    return sorted(unique, key=lambda b: b.timestamp)

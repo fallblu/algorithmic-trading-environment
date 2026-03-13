@@ -1,4 +1,6 @@
-"""Data ingestor process — fetches and stores OHLCV market data."""
+"""Data ingestor — fetch OHLCV data from exchanges and store as Parquet."""
+
+from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta, timezone
@@ -9,69 +11,39 @@ from persistra import process
 log = logging.getLogger(__name__)
 
 
-@process("job")
+@process("job", description="Fetch and store OHLCV market data")
 def run(
     env,
     symbols: str = "BTC/USD",
-    timeframe: str = "1h",
-    backfill_days: int = 365,
     exchange: str = "kraken",
-):
-    """Fetch OHLCV bars from an exchange and store in Parquet.
-
-    Accepts comma-separated symbols (e.g. "BTC/USD,ETH/USD").
-    Supports exchanges: kraken, oanda.
-    """
-    from constants import normalize_symbol
+    timeframe: str = "1h",
+    backfill_days: str = "365",
+    api_key: str = "",
+    account_id: str = "",
+) -> None:
     from data.store import MarketDataStore
-    from helpers import parse_symbols, market_data_dir
 
-    data_dir = market_data_dir(env.path)
-    store = MarketDataStore(data_dir)
-
-    symbol_list = parse_symbols(symbols)
-
-    # Select the correct backfill function based on exchange
-    if exchange == "kraken":
-        from data.kraken_api import backfill_ohlcv
-        backfill_fn = backfill_ohlcv
-    elif exchange == "oanda":
-        from data.oanda_api import backfill_candles
-        backfill_fn = backfill_candles
-    else:
-        raise ValueError(f"Unsupported exchange: {exchange}")
+    store = MarketDataStore(Path(env.path) / ".persistra" / "market_data")
+    symbol_list = [s.strip() for s in symbols.split(",")]
+    days = int(backfill_days)
+    end = datetime.now(timezone.utc)
+    start = end - timedelta(days=days)
 
     for symbol in symbol_list:
-        end = datetime.now(timezone.utc)
-        start = end - timedelta(days=backfill_days)
+        log.info("Fetching %s %s from %s (%d days)", symbol, timeframe, exchange, days)
 
-        # Check existing data
-        date_range = store.get_date_range(exchange, symbol, timeframe)
-        if date_range is not None:
-            existing_start, existing_end = date_range
-            log.info(
-                "Existing data for %s %s: %s to %s",
-                symbol, timeframe, existing_start, existing_end,
-            )
-            start = existing_end
-            log.info("Fetching new data from %s to %s", start, end)
+        if exchange == "kraken":
+            from data.kraken_api import backfill_ohlcv
+            bars = backfill_ohlcv(symbol, timeframe, start, end)
+        elif exchange == "oanda":
+            from data.oanda_api import backfill_candles
+            bars = backfill_candles(symbol, timeframe, api_key, account_id, start, end)
         else:
-            log.info("No existing data. Backfilling %d days of %s %s",
-                     backfill_days, symbol, timeframe)
-
-        bars = backfill_fn(
-            symbol=symbol,
-            timeframe=timeframe,
-            start=start,
-            end=end,
-        )
+            log.error("Unknown exchange: %s", exchange)
+            continue
 
         if bars:
-            store.write_bars(bars, exchange=exchange, timeframe=timeframe)
-            log.info("Stored %d bars for %s %s", len(bars), symbol, timeframe)
-
-            ns = env.state.ns("data")
-            ns.set("last_update", datetime.now(timezone.utc).isoformat())
-            ns.set(f"{normalize_symbol(symbol)}_{timeframe}_bars", len(bars))
+            count = store.write_bars(bars, exchange, timeframe)
+            log.info("Stored %d bars for %s/%s/%s", count, exchange, symbol, timeframe)
         else:
-            log.info("No new bars fetched for %s %s", symbol, timeframe)
+            log.warning("No bars returned for %s from %s", symbol, exchange)

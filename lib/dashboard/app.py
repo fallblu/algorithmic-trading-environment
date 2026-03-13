@@ -1,65 +1,55 @@
-"""FastAPI application factory for the trading dashboard."""
+"""Dashboard app — FastAPI factory for the trading dashboard."""
 
+from __future__ import annotations
+
+import logging
 from pathlib import Path
 
-try:
-    from fastapi import FastAPI
-    from fastapi.staticfiles import StaticFiles
-    from fastapi.templating import Jinja2Templates
-except ImportError:
-    raise ImportError(
-        "Dashboard requires fastapi and jinja2. "
-        "Install with: pip install fastapi[all] jinja2"
-    )
+from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 
-from .routes import overview, backtests, batch, portfolio, market_data, signals, stress_test, analysis, runner
+from dashboard.auth import TokenAuthMiddleware
 
-_DASHBOARD_DIR = Path(__file__).resolve().parent
-_TEMPLATES_DIR = _DASHBOARD_DIR / "templates"
-_STATIC_DIR = _DASHBOARD_DIR / "static"
+log = logging.getLogger(__name__)
+
+DASHBOARD_DIR = Path(__file__).parent
+TEMPLATES_DIR = DASHBOARD_DIR / "templates"
+STATIC_DIR = DASHBOARD_DIR / "static"
 
 
-def create_app(env=None, data_dir: Path | str | None = None) -> FastAPI:
-    """Create and configure the dashboard FastAPI application.
+def create_app(
+    state: dict | None = None,
+    auth_token: str = "",
+    lib_dir: Path | None = None,
+) -> FastAPI:
+    """Create and configure the FastAPI dashboard application."""
+    app = FastAPI(title="Trading Dashboard", docs_url=None, redoc_url=None)
 
-    Args:
-        env: Optional environment/config object with a data_dir attribute.
-        data_dir: Explicit path to the data directory. If provided, takes
-            precedence over env.data_dir.
+    # Store shared state on app
+    app.state.app_state = state or {}
+    app.state.lib_dir = lib_dir or Path("lib")
+    app.state.templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
-    Returns:
-        Configured FastAPI application instance.
-    """
-    app = FastAPI(title="Algorithmic Trading Environment", docs_url="/api/docs")
+    # Auth middleware
+    if auth_token:
+        app.add_middleware(TokenAuthMiddleware, auth_token=auth_token)
 
-    # Resolve data directory
-    if data_dir is not None:
-        resolved_data_dir = Path(data_dir)
-    elif env is not None and hasattr(env, "data_dir"):
-        resolved_data_dir = Path(env.data_dir)
-    else:
-        resolved_data_dir = Path.cwd() / "data"
+    # Static files
+    if STATIC_DIR.is_dir():
+        app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
-    app.state.data_dir = resolved_data_dir
-    app.state.env = env
+    # Register routes
+    from dashboard.routes.portfolios import router as portfolios_router
+    from dashboard.routes.editor import router as editor_router
+    from dashboard.routes.chart_builder import router as chart_router
+    from dashboard.routes.monitoring import router as monitoring_router
+    from dashboard.routes.data import router as data_router
 
-    # Templates
-    templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
-    app.state.templates = templates
-
-    # Static files — only mount if the directory exists
-    if _STATIC_DIR.is_dir():
-        app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
-
-    # Include route routers
-    app.include_router(overview.router)
-    app.include_router(backtests.router)
-    app.include_router(batch.router)
-    app.include_router(portfolio.router)
-    app.include_router(market_data.router)
-    app.include_router(signals.router)
-    app.include_router(stress_test.router)
-    app.include_router(analysis.router)
-    app.include_router(runner.router)
+    app.include_router(portfolios_router)
+    app.include_router(editor_router, prefix="/editor")
+    app.include_router(chart_router, prefix="/charts")
+    app.include_router(monitoring_router, prefix="/monitoring")
+    app.include_router(data_router, prefix="/data")
 
     return app

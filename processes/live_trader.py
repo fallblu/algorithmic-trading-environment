@@ -1,148 +1,99 @@
-"""Live trader process — daemon for paper and live trading.
+"""Live trader process — run live trading as a Persistra service."""
 
-Polls every 10s for new bars from the exchange WebSocket feed.
-On first tick: creates context, subscribes, warms up indicators.
-On subsequent ticks: calls ctx.run_once() and persists state.
+from __future__ import annotations
 
-Usage:
-    persistra process start live_trader -p mode=paper -p symbols=BTC/USD,ETH/USD -p timeframe=1m
-    persistra process start live_trader -p strategy=macd_trend -p mode=live -p params='{"fast_period":12}'
-"""
-
-import atexit
-import json
+import asyncio
 import logging
-from datetime import datetime, timezone
-from decimal import Decimal
+from pathlib import Path
 
-from persistra import process
+from persistra import process, state
 
 log = logging.getLogger(__name__)
 
-# Module-level state persists between daemon ticks
-_ctx = None
-_strategy = None
-_initialized = False
 
-
-@process("daemon", interval="10s")
-def run(
-    env,
-    strategy: str = "sma_crossover",
-    mode: str = "paper",
-    symbols: str = "BTC/USD",
-    timeframe: str = "1m",
-    exchange: str = "kraken",
-    params: str = "{}",
-    initial_cash: str = "10000",
-    max_position_size: str = "1.0",
-    warmup_bars: int = 40,
+@process("service")
+def live_trader(
+    portfolio_id: str = "",
+    api_key: str = "",
+    api_secret: str = "",
+    account_id: str = "",
 ):
-    """Run a registered strategy in paper or live mode.
+    """Run live trading for a portfolio.
 
-    Args:
-        strategy: Registered strategy name (e.g. sma_crossover, macd_trend).
-        mode: 'paper' or 'live'.
-        symbols: Comma-separated symbol list.
-        timeframe: Bar timeframe.
-        exchange: Exchange name for config defaults.
-        params: JSON string of strategy-specific parameters.
-        initial_cash: Starting equity (paper mode only).
-        max_position_size: Max position size as fraction of equity.
-        warmup_bars: Number of historical bars for indicator warmup.
+    Parameters:
+        portfolio_id: The portfolio ID to live trade.
+        api_key: Exchange API key.
+        api_secret: Exchange API secret (Kraken).
+        account_id: Exchange account ID (OANDA).
     """
-    global _ctx, _strategy, _initialized
+    from broker.kraken import KrakenBroker
+    from broker.oanda import OandaBroker
+    from execution.live import LiveContext
+    from portfolio.portfolio import Portfolio
 
-    from config import get_exchange_config
-    from data.universe import Universe
-    from helpers import parse_symbols
-    from strategy.registry import get_strategy, load_all_strategies
+    s = state()
 
-    load_all_strategies()
+    portfolios = s.get("portfolios", {})
+    if portfolio_id not in portfolios:
+        log.error("Portfolio %s not found", portfolio_id)
+        return
 
-    symbol_list = parse_symbols(symbols)
-    universe = Universe.from_symbols(symbol_list, timeframe)
+    portfolio = Portfolio.from_dict(portfolios[portfolio_id])
 
-    strategy_params = json.loads(params)
-    strategy_params.setdefault("symbols", symbol_list)
+    # Create appropriate broker
+    if portfolio.exchange == "oanda":
+        broker = OandaBroker(api_key=api_key, account_id=account_id)
+    else:
+        broker = KrakenBroker(api_key=api_key, api_secret=api_secret)
 
-    if not _initialized:
-        exchange_config = get_exchange_config(exchange)
-        strategy_class = get_strategy(strategy)
+    def on_fill(fill):
+        log.info("Live fill: %s %s %s @ %.2f", fill.side, fill.quantity, fill.symbol, fill.price)
+        active = s.get("active_processes", {})
+        if portfolio_id in active:
+            fills = active[portfolio_id].get("recent_fills", [])
+            fills.append({
+                "symbol": fill.symbol,
+                "side": fill.side.value,
+                "quantity": fill.quantity,
+                "price": fill.price,
+                "timestamp": fill.timestamp.isoformat(),
+            })
+            active[portfolio_id]["recent_fills"] = fills[-50:]
+            s["active_processes"] = active
 
-        if mode == "paper":
-            from execution.paper import PaperContext
-            _ctx = PaperContext(
-                universe=universe,
-                initial_cash=Decimal(initial_cash),
-                fee_rate=exchange_config.fee_rate,
-                slippage_pct=exchange_config.slippage_pct,
-                max_position_size=Decimal(max_position_size),
-            )
-        elif mode == "live":
-            from execution.live import LiveContext
-            _ctx = LiveContext(
-                universe=universe,
-                max_position_size=Decimal(max_position_size),
-            )
-        else:
-            raise ValueError(f"Unknown mode: {mode}. Use 'paper' or 'live'.")
+    def on_error(msg):
+        log.error("Live trading error: %s", msg)
+        active = s.get("active_processes", {})
+        if portfolio_id in active:
+            errors = active[portfolio_id].get("errors", [])
+            errors.append(msg)
+            active[portfolio_id]["errors"] = errors[-20:]
+            s["active_processes"] = active
 
-        _strategy = strategy_class(_ctx, strategy_params)
+    def on_status_change(status):
+        active = s.get("active_processes", {})
+        if portfolio_id in active:
+            active[portfolio_id]["connection_status"] = status
+            s["active_processes"] = active
 
-        _ctx.subscribe_all(timeframe)
-        _ctx.warmup(_strategy, timeframe, warmup_bars=warmup_bars)
+    # Register in active processes
+    active = s.get("active_processes", {})
+    active[portfolio_id] = {
+        "mode": "live",
+        "connection_status": "connecting",
+        "recent_fills": [],
+        "errors": [],
+    }
+    s["active_processes"] = active
 
-        atexit.register(_ctx.shutdown)
-        _initialized = True
-        log.info("%s trading initialized: strategy=%s, symbols=%s, timeframe=%s",
-                 mode.upper(), strategy, symbols, timeframe)
+    ctx = LiveContext(
+        portfolio=portfolio,
+        broker=broker,
+        api_key=api_key,
+        account_id=account_id,
+        on_fill=on_fill,
+        on_error=on_error,
+        on_status_change=on_status_change,
+    )
 
-    try:
-        result = _ctx.run_once(_strategy)
-
-        ns = env.state.ns(mode)
-        ns.set("last_tick", datetime.now(timezone.utc).isoformat())
-
-        if mode == "paper":
-            equity = result["equity"]
-            ns.set("equity", str(equity))
-            ns.set("bars_processed", result["bars_processed"])
-            ns.set("fills", result["fills"])
-
-            strat_ns = env.state.ns("strategy")
-            strat_ns.set("name", strategy)
-            strat_ns.set("mode", mode)
-            strat_ns.set("equity", str(equity))
-
-            # Update portfolio metrics for risk monitor
-            portfolio_ns = env.state.ns("portfolio")
-            current_date = datetime.now(timezone.utc).date().isoformat()
-            last_date = portfolio_ns.get("current_date", "")
-            if current_date != last_date:
-                portfolio_ns.set("day_start_equity", str(equity))
-                portfolio_ns.set("current_date", current_date)
-
-            day_start = Decimal(portfolio_ns.get("day_start_equity", str(equity)))
-            portfolio_ns.set("daily_pnl", float(equity - day_start))
-
-            peak = Decimal(portfolio_ns.get("peak_equity", str(equity)))
-            if equity > peak:
-                peak = equity
-                portfolio_ns.set("peak_equity", str(peak))
-            max_dd = float((peak - equity) / peak) if peak > 0 else 0.0
-            portfolio_ns.set("max_drawdown", max_dd)
-
-            if result["bars_processed"] > 0:
-                log.info(
-                    "Tick: %d bars, %d fills, equity=%s",
-                    result["bars_processed"], result["fills"], equity,
-                )
-        elif mode == "live":
-            ns.set("account", result.get("account", {}))
-
-            if result["bars_processed"] > 0:
-                log.info("Tick: %d bars processed", result["bars_processed"])
-
-    except Exception:
-        log.exception("Error in %s trading tick", mode)
+    asyncio.run(ctx.run())

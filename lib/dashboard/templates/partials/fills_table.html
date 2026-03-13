@@ -1,0 +1,18 @@
+{% for fill in fills|default([]) %}
+<tr class="border-b border-gray-700 hover:bg-gray-800">
+    <td class="px-4 py-2 text-gray-400">{{ fill.time }}</td>
+    <td class="px-4 py-2 text-gray-200">{{ fill.symbol }}</td>
+    <td class="px-4 py-2">
+        <span class="{% if fill.side == 'buy' %}text-green-400{% else %}text-red-400{% endif %}">
+            {{ fill.side|upper }}
+        </span>
+    </td>
+    <td class="px-4 py-2 text-gray-200">{{ fill.qty }}</td>
+    <td class="px-4 py-2 text-gray-200">{{ fill.price }}</td>
+    <td class="px-4 py-2 text-gray-400">{{ fill.fee }}</td>
+</tr>
+{% else %}
+<tr>
+    <td colspan="6" class="px-4 py-4 text-center text-gray-500">No fills yet.</td>
+</tr>
+{% endfor %}

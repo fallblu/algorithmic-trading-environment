@@ -1,140 +1,86 @@
-"""Backtest process — run any registered strategy in backtest mode (job).
+"""Backtest process — run a portfolio backtest as an isolated Persistra job."""
 
-For paper/live trading, use live_trader instead.
-
-Usage:
-    persistra process run backtest -p strategy=sma_crossover -p symbols=BTC/USD
-    persistra process run backtest -p strategy=macd_trend -p params='{"fast_period":12}'
-"""
+from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
-from decimal import Decimal
+from datetime import datetime
 from pathlib import Path
 
-from persistra import process
+from persistra import process, state
 
 log = logging.getLogger(__name__)
 
 
 @process("job")
-def run(
-    env,
-    strategy: str = "sma_crossover",
-    symbols: str = "BTC/USD",
-    timeframe: str = "1h",
-    exchange: str = "kraken",
-    params: str = "{}",
-    initial_cash: str = "10000",
-    max_position_size: str = "1.0",
-    start: str = "",
-    end: str = "",
-):
-    """Run a registered strategy in backtest mode.
+def backtest(portfolio_id: str = "", start: str = "", end: str = ""):
+    """Run a portfolio backtest.
 
-    Args:
-        strategy: Registered strategy name (e.g. sma_crossover, macd_trend).
-        symbols: Comma-separated symbol list.
-        timeframe: Bar timeframe.
-        exchange: Exchange name for config defaults and data.
-        params: JSON string of strategy-specific parameters.
-        initial_cash: Starting equity.
-        max_position_size: Max position size as fraction of equity.
-        start: Start date ISO format.
-        end: End date ISO format.
+    Parameters:
+        portfolio_id: The portfolio ID to backtest.
+        start: Start date (ISO format, optional).
+        end: End date (ISO format, optional).
     """
-    import pandas as pd
-
-    from analytics.performance import compute_performance
-    from config import get_exchange_config
-    from constants import periods_per_year
-    from data.state_parquet import ParquetStateStore
-    from data.universe import Universe
+    from data.store import MarketDataStore
     from execution.backtest import BacktestContext
-    from helpers import market_data_dir, parse_symbols, require_data
-    from strategy.registry import get_strategy, load_all_strategies
+    from portfolio.portfolio import Portfolio
 
-    load_all_strategies()
+    s = state()
 
-    strategy_class = get_strategy(strategy)
-    symbol_list = parse_symbols(symbols)
-    require_data(env.path, exchange, symbol_list, timeframe)
-    universe = Universe.from_symbols(symbol_list, timeframe)
+    # Load portfolio
+    portfolios = s.get("portfolios", {})
+    if portfolio_id not in portfolios:
+        log.error("Portfolio %s not found", portfolio_id)
+        return
 
-    exchange_config = get_exchange_config(exchange)
+    portfolio = Portfolio.from_dict(portfolios[portfolio_id])
 
-    start_dt = datetime.fromisoformat(start) if start else datetime(2024, 1, 1, tzinfo=timezone.utc)
-    end_dt = datetime.fromisoformat(end) if end else datetime.now(timezone.utc)
+    # Parse dates
+    start_dt = datetime.fromisoformat(start) if start else None
+    end_dt = datetime.fromisoformat(end) if end else None
 
-    strategy_params = json.loads(params)
-    strategy_params.setdefault("symbols", symbol_list)
+    # Set up data store
+    base_dir = Path("data")
+    store = MarketDataStore(base_dir)
 
-    ctx = BacktestContext(
-        universe=universe,
-        start=start_dt,
-        end=end_dt,
-        initial_cash=Decimal(initial_cash),
-        fee_rate=exchange_config.fee_rate,
-        slippage_pct=exchange_config.slippage_pct,
-        max_position_size=Decimal(max_position_size),
-        data_dir=market_data_dir(env.path),
+    # Track progress in state
+    def on_progress(bars_done: int, total: int):
+        results = s.get("backtest_results", {})
+        if portfolio_id in results:
+            results[portfolio_id]["progress"] = {
+                "bars_done": bars_done,
+                "total": total,
+                "pct": round(bars_done / total * 100, 1) if total > 0 else 0,
+            }
+            s["backtest_results"] = results
+
+    # Run backtest
+    ctx = BacktestContext(portfolio, store)
+    ctx.set_progress_callback(on_progress)
+    result = ctx.run(start=start_dt, end=end_dt)
+
+    # Store results
+    results = s.get("backtest_results", {})
+    results[portfolio_id] = {
+        "portfolio_id": portfolio_id,
+        "portfolio_name": portfolio.name,
+        "metrics": result.metrics,
+        "bars_processed": result.bars_processed,
+        "total_bars": result.total_bars,
+        "errors": result.errors,
+        "num_fills": len(result.fills),
+        "completed_at": datetime.utcnow().isoformat(),
+        "progress": {
+            "bars_done": result.bars_processed,
+            "total": result.total_bars,
+            "pct": 100.0,
+        },
+    }
+    s["backtest_results"] = results
+
+    log.info(
+        "Backtest complete: %d bars, %d fills, return=%.2f%%",
+        result.bars_processed,
+        len(result.fills),
+        result.metrics.get("total_return", 0) * 100,
     )
-
-    strat = strategy_class(ctx, strategy_params)
-    results = ctx.run(strat)
-
-    metrics = compute_performance(
-        equity_curve=results["equity_curve"],
-        fills=results["fills"],
-        periods_per_year=periods_per_year(timeframe),
-    )
-
-    # Save equity curve and fills as Parquet
-    pq_store = ParquetStateStore(Path(env.path) / ".persistra")
-
-    if results["equity_curve"]:
-        eq_df = pd.DataFrame(
-            [(ts, float(eq)) for ts, eq in results["equity_curve"]],
-            columns=["timestamp", "equity"],
-        )
-        eq_path = pq_store.save("backtest_equity_curve", eq_df)
-    else:
-        eq_path = ""
-
-    if results["fills"]:
-        fills_data = []
-        for f in results["fills"]:
-            fills_data.append({
-                "timestamp": f.timestamp,
-                "symbol": f.instrument.symbol,
-                "side": f.side.value,
-                "quantity": float(f.quantity),
-                "price": float(f.price),
-                "fee": float(f.fee),
-                "order_id": f.order_id,
-            })
-        fills_df = pd.DataFrame(fills_data)
-        fills_path = pq_store.save("backtest_fills", fills_df)
-    else:
-        fills_path = ""
-
-    ns = env.state.ns("backtest")
-    ns.set("results", metrics)
-    ns.set("equity_curve_path", eq_path)
-    ns.set("fills_path", fills_path)
-    ns.set("universe", symbols)
-
-    strat_ns = env.state.ns("strategy")
-    strat_ns.set("name", strategy)
-    strat_ns.set("params", strategy_params)
-    strat_ns.set("metrics", metrics)
-
-    log.info("=== Backtest Results ===")
-    log.info("Strategy: %s", strategy)
-    log.info("Universe: %s", symbols)
-    log.info("Total Return: %.2f%%", metrics["total_return"] * 100)
-    log.info("Sharpe Ratio: %.4f", metrics["sharpe_ratio"])
-    log.info("Max Drawdown: %.2f%%", metrics["max_drawdown"] * 100)
-    log.info("Num Trades: %d", metrics["num_trades"])
-    log.info("Win Rate: %.2f%%", metrics["win_rate"] * 100)

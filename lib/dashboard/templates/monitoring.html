@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block title %}Monitoring{% endblock %}
+
+{% block content %}
+<div class="flex items-center justify-between mb-6">
+    <h1 class="text-2xl font-bold text-white">Monitoring</h1>
+    <select id="portfolio-selector" onchange="switchPortfolio(this.value)"
+            class="bg-gray-800 border border-gray-600 rounded px-3 py-2 text-gray-200 text-sm focus:outline-none focus:border-blue-500">
+        <option value="">Select portfolio...</option>
+        {% for p in portfolios %}
+            <option value="{{ p.name }}" {% if p.name == selected_portfolio %}selected{% endif %}>{{ p.name }}</option>
+        {% endfor %}
+    </select>
+</div>
+
+<!-- Metrics Cards -->
+<div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 mb-6"
+     id="metrics-cards">
+    {% include "partials/metrics_card.html" %}
+</div>
+
+<!-- Equity Chart -->
+<div class="card rounded-lg p-4 mb-6">
+    <h2 class="text-sm font-semibold text-gray-400 mb-3">Equity Curve</h2>
+    <div id="equity-chart" class="h-64"></div>
+</div>
+
+<!-- Positions Table -->
+<div class="card rounded-lg p-4 mb-6">
+    <h2 class="text-sm font-semibold text-gray-400 mb-3">Open Positions</h2>
+    <div class="overflow-x-auto">
+        <table class="w-full text-sm text-left">
+            <thead class="text-xs text-gray-400 uppercase border-b border-gray-700">
+                <tr>
+                    <th class="px-4 py-2">Symbol</th>
+                    <th class="px-4 py-2">Side</th>
+                    <th class="px-4 py-2">Qty</th>
+                    <th class="px-4 py-2">Entry Price</th>
+                    <th class="px-4 py-2">Unrealized PnL</th>
+                </tr>
+            </thead>
+            <tbody id="positions-body"
+                   hx-get="/monitoring/positions?portfolio={{ selected_portfolio|default('') }}"
+                   hx-trigger="every 5s"
+                   hx-swap="innerHTML">
+                {% include "partials/positions_table.html" %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Fills Table -->
+<div class="card rounded-lg p-4 mb-6">
+    <h2 class="text-sm font-semibold text-gray-400 mb-3">Recent Fills</h2>
+    <div class="overflow-x-auto">
+        <table class="w-full text-sm text-left">
+            <thead class="text-xs text-gray-400 uppercase border-b border-gray-700">
+                <tr>
+                    <th class="px-4 py-2">Time</th>
+                    <th class="px-4 py-2">Symbol</th>
+                    <th class="px-4 py-2">Side</th>
+                    <th class="px-4 py-2">Qty</th>
+                    <th class="px-4 py-2">Price</th>
+                    <th class="px-4 py-2">Fee</th>
+                </tr>
+            </thead>
+            <tbody id="fills-body">
+                {% include "partials/fills_table.html" %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Error Log -->
+<div class="card rounded-lg p-4">
+    <h2 class="text-sm font-semibold text-gray-400 mb-3">Error Log</h2>
+    <div id="error-log" class="bg-gray-900 rounded p-3 h-40 overflow-y-auto font-mono text-xs text-red-400">
+        {% for err in errors|default([]) %}
+            <div class="mb-1">[{{ err.time }}] {{ err.message }}</div>
+        {% else %}
+            <div class="text-gray-500">No errors.</div>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    function switchPortfolio(name) {
+        if (!name) return;
+        window.location.href = '/monitoring?portfolio=' + encodeURIComponent(name);
+    }
+
+    // Load equity chart for selected portfolio
+    const selectedPortfolio = '{{ selected_portfolio|default("") }}';
+    if (selectedPortfolio) {
+        fetch('/monitoring/equity?portfolio=' + encodeURIComponent(selectedPortfolio))
+            .then(r => r.json())
+            .then(data => {
+                if (data.error) return;
+                Plotly.newPlot('equity-chart', data.data, Object.assign({
+                    paper_bgcolor: 'transparent',
+                    plot_bgcolor: 'transparent',
+                    font: { color: '#e5e7eb' },
+                    margin: { t: 10, r: 20, b: 40, l: 60 },
+                    xaxis: { gridcolor: '#374151' },
+                    yaxis: { gridcolor: '#374151' }
+                }, data.layout || {}), { responsive: true });
+            });
+    }
+</script>
+{% endblock %}
