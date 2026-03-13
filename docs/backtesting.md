@@ -222,19 +222,17 @@ rolling = rolling_correlation(btc_bars_df, eth_bars_df, window=30)
 
 ## Backtesting via Persistra
 
-The `processes/sma_crossover.py` process runs backtests within the Persistra framework:
+The `processes/backtest.py` process runs backtests within the Persistra framework:
 
 ```bash
-persistra run sma_crossover --params '{
-    "symbols": ["BTC/USD"],
-    "timeframe": "1h",
-    "fast_period": 10,
-    "slow_period": 30,
-    "quantity": "0.01",
-    "initial_cash": 10000,
-    "start": "2024-01-01",
-    "end": "2024-12-31"
-}'
+persistra process run backtest \
+    -p strategy=sma_crossover \
+    -p symbols=BTC/USD \
+    -p timeframe=1h \
+    -p params='{"fast_period":10,"slow_period":30}' \
+    -p initial_cash=10000 \
+    -p start=2024-01-01 \
+    -p end=2024-12-31
 ```
 
 Results are saved to Persistra state and visible in the dashboard.

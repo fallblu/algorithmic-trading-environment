@@ -12,7 +12,7 @@ except ImportError:
         "Install with: pip install fastapi[all] jinja2"
     )
 
-from .routes import overview, backtests, batch, portfolio, market_data, signals, stress_test, analysis
+from .routes import overview, backtests, batch, portfolio, market_data, signals, stress_test, analysis, runner
 
 _DASHBOARD_DIR = Path(__file__).resolve().parent
 _TEMPLATES_DIR = _DASHBOARD_DIR / "templates"
@@ -30,7 +30,7 @@ def create_app(env=None, data_dir: Path | str | None = None) -> FastAPI:
     Returns:
         Configured FastAPI application instance.
     """
-    app = FastAPI(title="Trader Dashboard", docs_url="/api/docs")
+    app = FastAPI(title="Algorithmic Trading Environment", docs_url="/api/docs")
 
     # Resolve data directory
     if data_dir is not None:
@@ -60,5 +60,6 @@ def create_app(env=None, data_dir: Path | str | None = None) -> FastAPI:
     app.include_router(signals.router)
     app.include_router(stress_test.router)
     app.include_router(analysis.router)
+    app.include_router(runner.router)
 
     return app

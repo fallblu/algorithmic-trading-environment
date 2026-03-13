@@ -1,6 +1,6 @@
 # Architecture Overview
 
-This document describes the high-level architecture of the Trader platform — a Python 3.12 quantitative trading system supporting backtesting, paper trading, and live trading across Kraken (crypto) and OANDA (forex).
+This document describes the high-level architecture of the Algorithmic Trading Environment — a Python 3.12 quantitative trading system supporting backtesting, paper trading, and live trading across Kraken (crypto) and OANDA (forex).
 
 ## System Diagram
 
@@ -197,7 +197,7 @@ The web dashboard (`lib/dashboard/`) is a FastAPI application with Jinja2 templa
 | `/backtests/` | Backtest results with equity curves |
 | `/batch/` | Parameter sweep results and heatmaps |
 | `/portfolio/` | Current positions and P&L |
-| `/market-data/` | Data coverage and ingestion status |
+| `/data/` | Data coverage and ingestion status |
 | `/signals/` | Strategy entry/exit visualization |
-| `/stress-test/` | Stress test and drawdown analysis |
+| `/stress/` | Stress test and drawdown analysis |
 | `/analysis/` | Performance analytics, correlation, regimes |

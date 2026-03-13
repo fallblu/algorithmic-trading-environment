@@ -1,8 +1,8 @@
-"""Exception hierarchy for the trader platform."""
+"""Exception hierarchy for the Algorithmic Trading Environment."""
 
 
 class TraderError(Exception):
-    """Base exception for all trader platform errors."""
+    """Base exception for all trading platform errors."""
     pass
 
 

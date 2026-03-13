@@ -1,6 +1,6 @@
 # Getting Started
 
-This guide walks you through setting up the Trader platform and running your first backtest.
+This guide walks you through setting up the Algorithmic Trading Environment and running your first backtest.
 
 ## Prerequisites
 
@@ -12,8 +12,8 @@ This guide walks you through setting up the Trader platform and running your fir
 1. **Clone the repository:**
 
 ```bash
-git clone <repo-url> trader
-cd trader
+git clone <repo-url> algorithmic-trading-environment
+cd algorithmic-trading-environment
 ```
 
 2. **Install dependencies:**
@@ -62,7 +62,7 @@ These are not needed for backtesting with local data.
 ## Project Structure
 
 ```
-trader/
+algorithmic-trading-environment/
   lib/                    # Core library
     analytics/            # Indicators, performance metrics, statistics
     broker/               # Broker implementations (simulated, Kraken, OANDA)
@@ -94,7 +94,7 @@ from pathlib import Path
 from data.store import MarketDataStore
 from data.exchange import get_exchange
 
-store = MarketDataStore(base_dir=Path(".persistra/market_data"))
+store = MarketDataStore(base_dir=Path(".persistra") / "market_data")
 exchange = get_exchange("kraken")
 
 # Fetch 1-hour BTC/USD bars
@@ -102,7 +102,11 @@ bars = exchange.fetch_ohlcv("BTC/USD", timeframe="1h")
 store.write_bars(bars, exchange="kraken", timeframe="1h")
 ```
 
-Or use the data ingestor process if configured with Persistra.
+Or use the data ingestor process via Persistra:
+
+```bash
+persistra process run data_ingestor -p symbols=BTC/USD -p timeframe=1h -p exchange=kraken
+```
 
 ### Step 2: Set Up the Universe
 
@@ -192,7 +196,7 @@ Start the web dashboard to visualize your backtest:
 
 ```bash
 # Via Persistra process
-persistra run dashboard
+persistra process start dashboard
 
 # Or directly
 python -c "

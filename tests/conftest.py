@@ -1,4 +1,4 @@
-"""Shared fixtures for the Trader test suite."""
+"""Shared fixtures for the Algorithmic Trading Environment test suite."""
 
 import sys
 from datetime import datetime, timezone

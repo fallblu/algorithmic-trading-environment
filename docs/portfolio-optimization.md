@@ -1,6 +1,6 @@
 # Portfolio Optimization
 
-The Trader platform includes portfolio optimization tools for multi-asset allocation, along with a rebalancing strategy that automatically adjusts positions to target weights.
+The Algorithmic Trading Environment includes portfolio optimization tools for multi-asset allocation, along with a rebalancing strategy that automatically adjusts positions to target weights.
 
 ## Optimization Methods
 
@@ -211,9 +211,12 @@ After running a portfolio optimization backtest, examine:
 4. **Risk metrics** — Compare Sharpe ratios, max drawdown, and volatility across methods to find the best fit for your risk tolerance.
 
 ```python
-from analytics.performance import compute_metrics
+from analytics.performance import compute_performance
 
-metrics = compute_metrics(results["equity_curve"], results["fills"])
+metrics = compute_performance(
+    equity_curve=results["equity_curve"],
+    fills=results["fills"],
+)
 
 print(f"Method: risk_parity")
 print(f"  Return:       {metrics['total_return']:.2%}")
