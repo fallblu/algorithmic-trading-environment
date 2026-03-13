@@ -85,13 +85,19 @@ def _get_env_path(request: Request) -> str:
 def _launch(request: Request, kind: str, cmd: list[str], params: dict) -> JSONResponse:
     env_path = _get_env_path(request)
     try:
+        log_dir = Path(env_path) / ".persistra" / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+        log_file = log_dir / f"{kind}_{ts}.log"
+        fh = open(log_file, "w")
         proc = subprocess.Popen(
             cmd,
             cwd=env_path,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stdout=fh,
+            stderr=fh,
         )
         entry = _register(proc, kind, params)
+        entry["log"] = str(log_file)
         return JSONResponse({"ok": True, **entry})
     except Exception as exc:
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
