@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% set active_page = "overview" %}
 
-{% block title %}Overview - Trader Dashboard{% endblock %}
+{% block title %}Overview - Algorithmic Trading Environment{% endblock %}
 {% block page_title %}Overview{% endblock %}
 
 {% block content %}
@@ -23,6 +23,24 @@
         <div class="stat-label">Market Data</div>
     </div>
 </div>
+
+<section class="card">
+    <h2>Quick Actions</h2>
+    <div class="quick-actions">
+        <a href="/backtests" class="btn">Run Backtest</a>
+        <a href="/batch" class="btn">Batch Run</a>
+        <a href="/data" class="btn btn-secondary">Ingest Data</a>
+        <a href="/stress" class="btn btn-secondary">Stress Test</a>
+        <a href="/analysis" class="btn btn-secondary">Analysis</a>
+    </div>
+</section>
+
+<section class="card">
+    <h2>Running Processes</h2>
+    <div id="process-status">
+        <p class="empty-state">Loading...</p>
+    </div>
+</section>
 
 <section class="card">
     <h2>Recent Results</h2>
@@ -57,4 +75,9 @@
         <dd><code>{{ data_dir }}</code></dd>
     </dl>
 </section>
+
+<script>
+loadProcesses('process-status');
+setInterval(function() { loadProcesses('process-status'); }, 5000);
+</script>
 {% endblock %}

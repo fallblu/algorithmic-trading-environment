@@ -1,6 +1,6 @@
 # Risk Management
 
-The Trader platform provides a multi-layered risk management system with pre-trade checks, position sizing, exposure limits, and circuit breakers.
+The Algorithmic Trading Environment provides a multi-layered risk management system with pre-trade checks, position sizing, exposure limits, and circuit breakers.
 
 ## Overview
 

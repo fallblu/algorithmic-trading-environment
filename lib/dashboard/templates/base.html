@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}Trader Dashboard{% endblock %}</title>
+    <title>{% block title %}Algorithmic Trading Environment{% endblock %}</title>
     <link rel="stylesheet" href="/static/style.css">
     <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
     {% block head %}{% endblock %}
@@ -11,7 +11,7 @@
 <body>
     <nav class="sidebar">
         <div class="sidebar-header">
-            <h2>Trader</h2>
+            <h2>ATE</h2>
         </div>
         <ul class="nav-links">
             <li><a href="/" class="{% if active_page == 'overview' %}active{% endif %}">Overview</a></li>
@@ -32,5 +32,92 @@
             {% block content %}{% endblock %}
         </div>
     </main>
+    <div id="toast-container"></div>
+    <script>
+    function showToast(message, type) {
+        type = type || 'info';
+        var container = document.getElementById('toast-container');
+        var toast = document.createElement('div');
+        toast.className = 'toast toast-' + type;
+        toast.textContent = message;
+        container.appendChild(toast);
+        setTimeout(function() { toast.classList.add('toast-visible'); }, 10);
+        setTimeout(function() {
+            toast.classList.remove('toast-visible');
+            setTimeout(function() { toast.remove(); }, 300);
+        }, 4000);
+    }
+
+    function submitProcess(url, formId) {
+        var form = document.getElementById(formId);
+        var data = {};
+        var inputs = form.querySelectorAll('input, select, textarea');
+        for (var i = 0; i < inputs.length; i++) {
+            var el = inputs[i];
+            if (el.name) {
+                data[el.name] = el.type === 'number' ? (el.value === '' ? el.defaultValue : el.value) : el.value;
+            }
+        }
+        fetch(url, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(data)
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(result) {
+            if (result.ok) {
+                showToast('Process started (PID ' + result.pid + ')', 'success');
+            } else {
+                showToast('Error: ' + (result.error || 'Unknown error'), 'error');
+            }
+        })
+        .catch(function(err) {
+            showToast('Request failed: ' + err.message, 'error');
+        });
+    }
+
+    function loadStrategies(selectId) {
+        fetch('/api/strategies')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            var sel = document.getElementById(selectId);
+            if (!sel) return;
+            var current = sel.value;
+            sel.innerHTML = '';
+            (data.strategies || []).forEach(function(name) {
+                var opt = document.createElement('option');
+                opt.value = name;
+                opt.textContent = name;
+                if (name === current) opt.selected = true;
+                sel.appendChild(opt);
+            });
+        })
+        .catch(function() {});
+    }
+
+    function loadProcesses(containerId) {
+        fetch('/api/processes')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            var container = document.getElementById(containerId);
+            if (!container) return;
+            var procs = data.processes || [];
+            if (procs.length === 0) {
+                container.innerHTML = '<p class="empty-state">No processes tracked yet.</p>';
+                return;
+            }
+            var html = '<table class="data-table"><thead><tr><th>PID</th><th>Type</th><th>Status</th><th>Started</th></tr></thead><tbody>';
+            procs.forEach(function(p) {
+                var statusClass = p.status === 'running' ? 'status-running' : (p.status === 'completed' ? 'status-completed' : 'status-failed');
+                html += '<tr><td><code>' + p.pid + '</code></td><td>' + p.type + '</td>';
+                html += '<td><span class="process-status ' + statusClass + '">' + p.status + '</span></td>';
+                html += '<td>' + p.started_at + '</td></tr>';
+            });
+            html += '</tbody></table>';
+            container.innerHTML = html;
+        })
+        .catch(function() {});
+    }
+    </script>
 </body>
 </html>

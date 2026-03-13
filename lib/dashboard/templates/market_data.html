@@ -1,10 +1,42 @@
 {% extends "base.html" %}
 {% set active_page = "market_data" %}
 
-{% block title %}Market Data - Trader Dashboard{% endblock %}
+{% block title %}Market Data - Algorithmic Trading Environment{% endblock %}
 {% block page_title %}Market Data{% endblock %}
 
 {% block content %}
+<section class="form-card">
+    <h2>Ingest Data</h2>
+    <form id="ingest-form" onsubmit="event.preventDefault(); submitProcess('/api/run/ingest', 'ingest-form');">
+        <div class="form-row">
+            <div class="form-group">
+                <label for="in-exchange">Exchange</label>
+                <select id="in-exchange" name="exchange">
+                    <option value="kraken">kraken</option><option value="oanda">oanda</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="in-symbols">Symbols</label>
+                <input type="text" id="in-symbols" name="symbols" value="BTC/USD">
+            </div>
+            <div class="form-group">
+                <label for="in-timeframe">Timeframe</label>
+                <select id="in-timeframe" name="timeframe">
+                    <option value="1m">1m</option><option value="5m">5m</option><option value="15m">15m</option>
+                    <option value="1h" selected>1h</option><option value="4h">4h</option><option value="1d">1d</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="in-days">Backfill Days</label>
+                <input type="number" id="in-days" name="backfill_days" value="365">
+            </div>
+        </div>
+        <div class="form-actions">
+            <button type="submit" class="btn btn-success">Ingest Data</button>
+        </div>
+    </form>
+</section>
+
 <section class="card">
     <h2>Available Data</h2>
     {% if available %}
@@ -31,7 +63,7 @@
         </tbody>
     </table>
     {% else %}
-    <p class="empty-state">No market data found. Run the data ingestor to fetch data.</p>
+    <p class="empty-state">No market data found. Use the form above to ingest data.</p>
     {% endif %}
 </section>
 

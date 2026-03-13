@@ -59,15 +59,13 @@ ctx.shutdown()
 Use the Persistra process for continuous paper trading:
 
 ```bash
-persistra run sma_crossover_live --params '{
-    "mode": "paper",
-    "symbols": ["BTC/USD"],
-    "timeframe": "1h",
-    "fast_period": 10,
-    "slow_period": 30,
-    "quantity": "0.01",
-    "initial_cash": 10000
-}'
+persistra process start live_trader \
+    -p mode=paper \
+    -p strategy=sma_crossover \
+    -p symbols=BTC/USD \
+    -p timeframe=1m \
+    -p params='{"fast_period":10,"slow_period":30,"quantity":"0.01"}' \
+    -p initial_cash=10000
 ```
 
 The daemon polls every 10 seconds, processing new bars as they arrive.
@@ -151,14 +149,12 @@ ctx.shutdown()
 Or via Persistra:
 
 ```bash
-persistra run sma_crossover_live --params '{
-    "mode": "live",
-    "symbols": ["BTC/USD"],
-    "timeframe": "1h",
-    "fast_period": 10,
-    "slow_period": 30,
-    "quantity": "0.01"
-}'
+persistra process start live_trader \
+    -p mode=live \
+    -p strategy=sma_crossover \
+    -p symbols=BTC/USD \
+    -p timeframe=1m \
+    -p params='{"fast_period":10,"slow_period":30,"quantity":"0.01"}'
 ```
 
 ### Error Handling

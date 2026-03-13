@@ -1,34 +1,75 @@
 {% extends "base.html" %}
 {% set active_page = "analysis" %}
 
-{% block title %}Analysis - Trader Dashboard{% endblock %}
+{% block title %}Analysis - Algorithmic Trading Environment{% endblock %}
 {% block page_title %}Analysis{% endblock %}
 
 {% block content %}
+<section class="form-card">
+    <h2>New Analysis</h2>
+    <form id="analysis-form" onsubmit="event.preventDefault(); submitProcess('/api/run/analysis', 'analysis-form');">
+        <div class="form-row">
+            <div class="form-group">
+                <label for="an-symbol">Symbol</label>
+                <input type="text" id="an-symbol" name="symbol" value="BTC/USD">
+            </div>
+            <div class="form-group">
+                <label for="an-timeframe">Timeframe</label>
+                <select id="an-timeframe" name="timeframe">
+                    <option value="1m">1m</option><option value="5m">5m</option><option value="15m">15m</option>
+                    <option value="1h" selected>1h</option><option value="4h">4h</option><option value="1d">1d</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="an-exchange">Exchange</label>
+                <select id="an-exchange" name="exchange">
+                    <option value="kraken">kraken</option><option value="oanda">oanda</option>
+                </select>
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="an-scan">Scan Symbols</label>
+                <input type="text" id="an-scan" name="scan_symbols" value="BTC/USD,ETH/USD">
+            </div>
+            <div class="form-group">
+                <label for="an-corr">Correlation Symbols</label>
+                <input type="text" id="an-corr" name="correlation_symbols" value="BTC/USD,ETH/USD">
+            </div>
+        </div>
+        <div class="form-actions">
+            <button type="submit" class="btn btn-success">Run Analysis</button>
+        </div>
+    </form>
+</section>
+
 {% if results %}
-<table class="data-table">
-    <thead>
-        <tr>
-            <th>ID</th>
-            <th>Symbol</th>
-            <th>Type</th>
-            <th>Timestamp</th>
-        </tr>
-    </thead>
-    <tbody>
-        {% for r in results %}
-        <tr>
-            <td><code>{{ r.get('id', '')[:12] }}</code></td>
-            <td>{{ r.get('symbol', 'N/A') }}</td>
-            <td>{{ r.get('analysis_type', 'N/A') }}</td>
-            <td>{{ r.get('timestamp', 'N/A') }}</td>
-        </tr>
-        {% endfor %}
-    </tbody>
-</table>
+<section class="card">
+    <h2>Results</h2>
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Symbol</th>
+                <th>Type</th>
+                <th>Timestamp</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in results %}
+            <tr>
+                <td><code>{{ r.get('id', '')[:12] }}</code></td>
+                <td>{{ r.get('symbol', 'N/A') }}</td>
+                <td>{{ r.get('analysis_type', 'N/A') }}</td>
+                <td>{{ r.get('timestamp', 'N/A') }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
 {% else %}
 <div class="empty-state">
-    <p>No analysis results found. Run an analysis workflow to generate results.</p>
+    <p>No analysis results found. Use the form above to run an analysis.</p>
 </div>
 {% endif %}
 {% endblock %}
