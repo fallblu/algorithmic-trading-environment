@@ -25,6 +25,7 @@ async def monitoring_page(request: Request):
     try:
         portfolios = [p.to_dict() for p in storage.list_all()]
     except Exception:
+        log.exception("Failed to list portfolios for monitoring page")
         portfolios = []
     return templates.TemplateResponse(
         "monitoring.html",
@@ -40,7 +41,6 @@ async def monitoring_page(request: Request):
 async def live_status(portfolio_id: str, request: Request) -> JSONResponse:
     state = request.app.state.app_state
     try:
-        # Live context stored by the paper/live runner under "live_contexts"
         live_contexts: dict = state.get("live_contexts", {})
         ctx = live_contexts.get(portfolio_id)
         if ctx is None:
@@ -94,7 +94,7 @@ async def list_results(request: Request) -> JSONResponse:
     bt_results: dict = state.get("backtest_results", {})
     summary = []
     for pid, job in bt_results.items():
-        entry = {
+        entry: dict = {
             "portfolio_id": pid,
             "status": job.get("status", "unknown"),
             "bars_processed": job.get("bars_processed", 0),

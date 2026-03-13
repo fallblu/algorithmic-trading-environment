@@ -90,14 +90,14 @@ async def list_series(request: Request) -> JSONResponse:
         return JSONResponse({
             "series": [
                 {
-                    "key": s.key,
-                    "name": s.name,
-                    "type": s.series_type,
-                    "subplot": s.subplot,
-                    "description": s.description,
-                    "source": s.source,
+                    "key": info.key,
+                    "name": info.name,
+                    "type": info.series_type,
+                    "subplot": info.subplot,
+                    "description": info.description,
+                    "source": info.source,
                 }
-                for s in all_series.values()
+                for info in all_series.values()
             ],
         })
     except Exception as exc:

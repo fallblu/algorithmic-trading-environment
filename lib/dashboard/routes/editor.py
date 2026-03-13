@@ -87,7 +87,11 @@ async def list_modules(request: Request) -> JSONResponse:
         modules = discover_user_modules(lib_dir)
         return JSONResponse({
             "modules": [
-                {"name": m.name, "files": m.files, "charts": list(m.charts.keys())}
+                {
+                    "name": m.name,
+                    "files": m.files,
+                    "charts": list(m.charts.keys()),
+                }
                 for m in modules
             ],
         })
@@ -111,7 +115,9 @@ async def list_module_files(name: str, request: Request) -> JSONResponse:
 
 
 @router.get("/api/modules/{name}/files/{filename}")
-async def get_module_file(name: str, filename: str, request: Request) -> JSONResponse:
+async def get_module_file(
+    name: str, filename: str, request: Request,
+) -> JSONResponse:
     lib_dir: Path = request.app.state.lib_dir
     path = lib_dir / name / filename
     if not path.is_file():
@@ -125,7 +131,9 @@ async def get_module_file(name: str, filename: str, request: Request) -> JSONRes
 
 
 @router.post("/api/modules/{name}/files/{filename}")
-async def save_module_file(name: str, filename: str, request: Request) -> JSONResponse:
+async def save_module_file(
+    name: str, filename: str, request: Request,
+) -> JSONResponse:
     lib_dir: Path = request.app.state.lib_dir
     module_dir = lib_dir / name
     if not module_dir.is_dir():
