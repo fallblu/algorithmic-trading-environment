@@ -1,38 +1,25 @@
-"""Strategy ABC — base class for all trading strategies."""
+"""Strategy ABC — base class for trading strategies."""
+
+from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
 import pandas as pd
 
-from execution.context import ExecutionContext
-from models.fill import Fill
 from models.order import Order
 
 
 class Strategy(ABC):
     """Base class for trading strategies.
 
-    Strategies implement on_bar() to produce orders based on new market data.
-    The execution context handles order submission through broker and risk manager.
+    Strategies implement on_bar() to produce orders based on market data.
+    Two usage modes:
+    - Class-based: subclass Strategy and place in strategies/ directory
+    - Function-based: write an on_bar() function in the editor, wrapped via FunctionStrategy
     """
 
-    def __init__(self, ctx: ExecutionContext, params: dict | None = None):
-        self.ctx = ctx
+    def __init__(self, params: dict | None = None) -> None:
         self.params = params or {}
-
-    @abstractmethod
-    def on_bar(self, panel: pd.DataFrame) -> list[Order]:
-        """Called on each new bar group.
-
-        Args:
-            panel: MultiIndex DataFrame with (timestamp, symbol) index and
-                   columns [open, high, low, close, volume, trades, vwap].
-                   Contains the last `lookback()` bars for all symbols.
-
-        Returns:
-            List of orders to submit.
-        """
-        ...
 
     @abstractmethod
     def universe(self) -> list[str]:
@@ -44,10 +31,22 @@ class Strategy(ABC):
         """Number of bars of history needed for indicator computation."""
         ...
 
-    def on_fill(self, fill: Fill) -> None:
-        """Called when an order is filled. Override for custom handling."""
-        pass
+    @abstractmethod
+    def on_bar(
+        self,
+        bars: pd.DataFrame,
+        positions: dict[str, float],
+    ) -> list[Order]:
+        """Called on each new bar.
 
-    def on_stop(self) -> None:
-        """Called when the strategy is stopped. Override for cleanup."""
-        pass
+        Args:
+            bars: DataFrame with columns [open, high, low, close, volume],
+                  indexed by timestamp. Contains the last lookback() rows.
+                  For multi-symbol, MultiIndex (timestamp, symbol).
+            positions: Current position sizes {symbol: quantity}.
+                       Positive = long, negative = short.
+
+        Returns:
+            List of orders to submit.
+        """
+        ...

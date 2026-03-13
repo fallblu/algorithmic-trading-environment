@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}Portfolios{% endblock %}
+
+{% block content %}
+<div class="flex items-center justify-between mb-6">
+    <h1 class="text-2xl font-bold text-white">Portfolios</h1>
+    <button onclick="document.getElementById('create-modal').classList.remove('hidden')"
+            class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm font-medium">
+        + Create Portfolio
+    </button>
+</div>
+
+<!-- Portfolio Grid -->
+<div id="portfolio-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+    {% for portfolio in portfolios %}
+        {% include "partials/portfolio_card.html" %}
+    {% else %}
+        <div class="col-span-full text-center py-12 text-gray-400">
+            No portfolios yet. Create one to get started.
+        </div>
+    {% endfor %}
+</div>
+
+<!-- Create Portfolio Modal -->
+<div id="create-modal" class="hidden fixed inset-0 z-40 flex items-center justify-center bg-black bg-opacity-60">
+    <div class="card rounded-lg shadow-xl w-full max-w-md p-6">
+        <div class="flex items-center justify-between mb-4">
+            <h2 class="text-lg font-bold text-white">Create Portfolio</h2>
+            <button onclick="document.getElementById('create-modal').classList.add('hidden')"
+                    class="text-gray-400 hover:text-white">&times;</button>
+        </div>
+        <form hx-post="/portfolios" hx-target="#portfolio-grid" hx-swap="beforeend"
+              hx-on::after-request="if(event.detail.successful) document.getElementById('create-modal').classList.add('hidden')">
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm text-gray-400 mb-1">Name</label>
+                    <input type="text" name="name" required
+                           class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-gray-200 text-sm focus:outline-none focus:border-blue-500">
+                </div>
+                <div>
+                    <label class="block text-sm text-gray-400 mb-1">Initial Cash</label>
+                    <input type="number" name="initial_cash" value="100000" step="1000"
+                           class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-gray-200 text-sm focus:outline-none focus:border-blue-500">
+                </div>
+                <div>
+                    <label class="block text-sm text-gray-400 mb-1">Exchange</label>
+                    <select name="exchange"
+                            class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-gray-200 text-sm focus:outline-none focus:border-blue-500">
+                        <option value="kraken">Kraken</option>
+                        <option value="oanda">Oanda</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm text-gray-400 mb-1">Strategy</label>
+                    <select name="strategy"
+                            class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-gray-200 text-sm focus:outline-none focus:border-blue-500">
+                        {% for strategy in strategies %}
+                            <option value="{{ strategy }}">{{ strategy }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+            <div class="flex justify-end space-x-3 mt-6">
+                <button type="button"
+                        onclick="document.getElementById('create-modal').classList.add('hidden')"
+                        class="px-4 py-2 rounded text-sm text-gray-400 hover:text-white">Cancel</button>
+                <button type="submit"
+                        class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm font-medium">Create</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

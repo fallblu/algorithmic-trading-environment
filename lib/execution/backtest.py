@@ -1,164 +1,235 @@
-"""BacktestContext — multi-symbol bar-by-bar replay engine with simulated broker."""
+"""BacktestContext — historical replay with SimulatedBroker."""
+
+from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from decimal import Decimal
-from pathlib import Path
 
-from broker.base import Broker
+import pandas as pd
+
+from analytics.metrics import compute_metrics
 from broker.simulated import SimulatedBroker
-from data.historical import HistoricalFeed
-from data.price_panel import PricePanel
+from data.feed import HistoricalFeed
 from data.store import MarketDataStore
-from data.universe import Universe
-from execution.context import ExecutionContext
+from execution.context import BacktestResult, ExecutionContext
+from models.bar import Bar
+from models.order import Order
+from portfolio.orchestrator import PortfolioOrchestrator
+from portfolio.portfolio import Portfolio, StrategyAllocation
 from risk.manager import RiskManager
-from strategy.base import Strategy
+from strategy.function_adapter import FunctionStrategy, compile_strategy_source
+from strategy.registry import get_strategy
 
 log = logging.getLogger(__name__)
 
 
 class BacktestContext(ExecutionContext):
-    """Drives multi-symbol bar-by-bar replay for backtesting.
+    """Runs a portfolio backtest over historical data."""
 
-    Owns the replay loop: loads bars for all symbols from HistoricalFeed,
-    groups them by timestamp, processes through SimulatedBroker, then
-    calls strategy.on_bar() with a PricePanel window.
+    def __init__(self, portfolio: Portfolio, store: MarketDataStore) -> None:
+        self._portfolio = portfolio
+        self._store = store
+        self._broker = SimulatedBroker(initial_cash=portfolio.initial_cash)
+        self._risk_mgr = RiskManager(portfolio.risk_config)
+        self._orchestrator = PortfolioOrchestrator(portfolio.orchestration_code)
+        self._current_ts = datetime.now(timezone.utc)
+        self._strategies: dict[str, FunctionStrategy] = {}
+        self._progress_callback = None
 
-    Supports spot and forex (spread simulation).
-    """
+    @property
+    def mode(self) -> str:
+        return "backtest"
 
-    mode = "backtest"
-
-    def __init__(
-        self,
-        universe: Universe,
-        start: datetime | None = None,
-        end: datetime | None = None,
-        initial_cash: Decimal = Decimal("10000"),
-        fee_rate: Decimal = Decimal("0.0026"),
-        slippage_pct: Decimal = Decimal("0.0001"),
-        max_position_size: Decimal = Decimal("1.0"),
-        data_dir: Path | None = None,
-        exchange: str | None = None,
-        margin_mode: bool = False,
-        leverage: Decimal = Decimal("1"),
-        spread_pips: Decimal = Decimal("0"),
-    ):
-        self._universe = universe
-        self.start = start
-        self.end = end
-
-        if data_dir is None:
-            data_dir = Path(".persistra/market_data")
-
-        # Auto-detect exchange from universe
-        if exchange is None:
-            first_inst = next(iter(universe.instruments.values()), None)
-            exchange = first_inst.exchange if first_inst else "kraken"
-
-        self._exchange = exchange
-        self._store = MarketDataStore(data_dir)
-        self._feed = HistoricalFeed(self._store, exchange=exchange)
-        self._broker = SimulatedBroker(
-            initial_cash=initial_cash,
-            fee_rate=fee_rate,
-            slippage_pct=slippage_pct,
-            margin_mode=margin_mode,
-            leverage=leverage,
-            spread_pips=spread_pips,
-        )
-        self._risk_manager = RiskManager(max_position_size=max_position_size)
-        self._current_time = datetime.now(timezone.utc)
-        self._equity_curve: list[tuple[datetime, Decimal]] = []
-        self._bars_processed: int = 0
-
-    def get_universe(self) -> Universe:
-        return self._universe
-
-    def get_broker(self) -> Broker:
+    def get_broker(self) -> SimulatedBroker:
         return self._broker
 
-    def get_risk_manager(self) -> RiskManager:
-        return self._risk_manager
-
     def current_time(self) -> datetime:
-        return self._current_time
+        return self._current_ts
 
-    @property
-    def equity_curve(self) -> list[tuple[datetime, Decimal]]:
-        return list(self._equity_curve)
+    def set_progress_callback(self, callback) -> None:
+        """Set a callback(bars_done, total_bars) for progress reporting."""
+        self._progress_callback = callback
 
-    @property
-    def fills(self):
-        return self._broker.fills
+    def run(
+        self,
+        start: datetime | None = None,
+        end: datetime | None = None,
+    ) -> BacktestResult:
+        """Execute the full backtest and return results."""
+        result = BacktestResult(portfolio_id=self._portfolio.id)
 
-    def run(self, strategy: Strategy) -> dict:
-        """Execute the multi-symbol backtest replay loop."""
-        panel = PricePanel(self._universe, lookback=strategy.lookback())
+        # Build strategies
+        self._build_strategies(result)
+        if not self._strategies:
+            result.errors.append("No valid strategies to backtest")
+            return result
 
-        # Load bars for all symbols
-        self._feed.load_universe(self._universe, self.start, self.end)
+        # Collect all symbols and load feed
+        all_symbols = self._collect_symbols()
+        timeframe = self._portfolio.strategies[0].timeframe if self._portfolio.strategies else "1h"
 
-        if self._feed.total_groups == 0:
-            log.warning("No bars found for universe %s", self._universe.symbols)
-            return {"equity_curve": [], "fills": [], "bars_processed": 0}
+        feed = HistoricalFeed(self._store, self._portfolio.exchange)
+        feed.load(all_symbols, timeframe, start, end)
+        result.total_bars = feed.total_groups
 
-        log.info(
-            "Starting backtest: %s %s, %d timestamp groups",
-            self._universe.symbols,
-            self._universe.timeframe,
-            self._feed.total_groups,
-        )
+        if feed.total_groups == 0:
+            result.errors.append(f"No data found for symbols {all_symbols}")
+            return result
 
-        # Record initial equity
-        initial_equity = self._broker.get_account().equity
-        first_group = True
+        # Load DataFrames for lookback
+        dfs = feed.get_dataframes(all_symbols, timeframe, start, end)
+
+        # Replay loop
+        bars_so_far: dict[str, list[dict]] = {s: [] for s in all_symbols}
 
         while True:
-            bar_group = self._feed.next_bar_group()
+            bar_group = feed.next_bar_group()
             if bar_group is None:
                 break
 
-            self._current_time = bar_group[0].timestamp
+            self._current_ts = bar_group[0].timestamp
 
-            if first_group:
-                self._equity_curve.append((self._current_time, initial_equity))
-                first_group = False
+            # Process bars through broker (updates positions, fills limits)
+            fills_from_broker = self._broker.process_bars(bar_group)
+            result.fills.extend(fills_from_broker)
 
-            # 1. Process pending orders against all bars at this timestamp
-            self._broker.process_bars(bar_group)
+            # Accumulate bars for DataFrame construction
+            for bar in bar_group:
+                bars_so_far[bar.symbol].append({
+                    "timestamp": bar.timestamp,
+                    "open": bar.open,
+                    "high": bar.high,
+                    "low": bar.low,
+                    "close": bar.close,
+                    "volume": bar.volume,
+                })
 
-            # 2. Append bars to panel
-            panel.append_bars(bar_group)
+            # Run strategies
+            strategy_signals: dict[str, list[Order]] = {}
+            positions_by_strategy: dict[str, dict[str, float]] = {}
 
-            # 3. Call strategy if panel is ready
-            if panel.is_ready:
-                orders = strategy.on_bar(panel.get_window())
+            for alloc in self._portfolio.strategies:
+                sid = alloc.strategy_id
+                strategy = self._strategies.get(sid)
+                if strategy is None:
+                    continue
 
-                # 4. Risk check + submit orders
-                for order in orders:
-                    if self._risk_manager.check(order, self._broker):
+                # Build per-strategy positions dict
+                qty_map = self._broker.position_manager.get_all_quantities(
+                    strategy_id=sid
+                )
+                positions_by_strategy[sid] = qty_map
+
+                # Build bars DataFrame for this strategy's symbols
+                strat_symbols = alloc.symbols or all_symbols
+                bar_df = self._build_strategy_bars(bars_so_far, strat_symbols)
+                if bar_df is None or len(bar_df) < 1:
+                    strategy_signals[sid] = []
+                    continue
+
+                try:
+                    orders = strategy.on_bar(bar_df, qty_map)
+                    for order in orders:
+                        order.strategy_id = sid
+                    strategy_signals[sid] = orders
+                except Exception as e:
+                    result.errors.append(f"Strategy {sid} error at {self._current_ts}: {e}")
+                    strategy_signals[sid] = []
+
+            # Run orchestrator
+            allocations = {
+                a.strategy_id: a.allocation_pct for a in self._portfolio.strategies
+            }
+            market_dfs = {s: self._bars_to_df(bars_so_far[s]) for s in all_symbols}
+            adjusted_allocs = self._orchestrator.run(
+                strategy_signals, allocations, positions_by_strategy, market_dfs
+            )
+
+            # Submit orders (respecting allocations and risk)
+            for alloc in self._portfolio.strategies:
+                sid = alloc.strategy_id
+                if adjusted_allocs.get(sid, 0) == 0:
+                    continue  # paused by orchestrator
+
+                for order in strategy_signals.get(sid, []):
+                    allowed, reason = self._risk_mgr.check_order(order, self._broker)
+                    if allowed:
                         self._broker.submit_order(order)
                     else:
-                        log.info("Order rejected by risk manager: %s", order.id)
+                        log.debug("Order rejected by risk: %s", reason)
 
-            # 5. Record equity snapshot
+            # Check portfolio-level risk
+            self._risk_mgr.check_portfolio(self._broker)
+
+            # Record equity
             account = self._broker.get_account()
-            self._equity_curve.append((self._current_time, account.equity))
-            self._bars_processed += 1
+            result.equity_curve.append((self._current_ts, account.equity))
+            result.bars_processed = feed.current_index
 
-        log.info(
-            "Backtest complete: %d groups, %d fills, final equity: %s",
-            self._bars_processed,
-            len(self._broker.fills),
-            self._broker.get_account().equity,
+            if self._progress_callback:
+                self._progress_callback(feed.current_index, feed.total_groups)
+
+        # Compute final metrics
+        result.fills = self._broker.fills
+        result.metrics = compute_metrics(
+            result.equity_curve,
+            result.fills,
+            initial_cash=self._portfolio.initial_cash,
         )
 
-        return {
-            "equity_curve": self._equity_curve,
-            "fills": self._broker.fills,
-            "bars_processed": self._bars_processed,
-            "final_equity": self._broker.get_account().equity,
-            "initial_equity": initial_equity,
-        }
+        return result
+
+    def _build_strategies(self, result: BacktestResult) -> None:
+        """Instantiate strategy objects from portfolio allocations."""
+        for alloc in self._portfolio.strategies:
+            try:
+                if alloc.source_code:
+                    strategy = FunctionStrategy(
+                        source_code=alloc.source_code,
+                        name=alloc.strategy_name,
+                        symbols=alloc.symbols,
+                        params=alloc.params,
+                    )
+                else:
+                    cls = get_strategy(alloc.strategy_name)
+                    strategy = cls(params=alloc.params)
+                self._strategies[alloc.strategy_id] = strategy
+            except Exception as e:
+                result.errors.append(
+                    f"Failed to build strategy '{alloc.strategy_name}': {e}"
+                )
+
+    def _collect_symbols(self) -> list[str]:
+        """Collect unique symbols across all strategies."""
+        symbols: set[str] = set()
+        for alloc in self._portfolio.strategies:
+            symbols.update(alloc.symbols)
+        return sorted(symbols)
+
+    def _build_strategy_bars(
+        self, bars_so_far: dict[str, list[dict]], symbols: list[str]
+    ) -> pd.DataFrame | None:
+        """Build a DataFrame from accumulated bars for a strategy's symbols."""
+        if len(symbols) == 1:
+            rows = bars_so_far.get(symbols[0], [])
+            if not rows:
+                return None
+            df = pd.DataFrame(rows)
+            df.set_index("timestamp", inplace=True)
+            return df
+
+        # Multi-symbol: use first symbol for primary DataFrame
+        rows = bars_so_far.get(symbols[0], [])
+        if not rows:
+            return None
+        df = pd.DataFrame(rows)
+        df.set_index("timestamp", inplace=True)
+        return df
+
+    def _bars_to_df(self, rows: list[dict]) -> pd.DataFrame:
+        """Convert accumulated bar dicts to a DataFrame."""
+        if not rows:
+            return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
+        df = pd.DataFrame(rows)
+        df.set_index("timestamp", inplace=True)
+        return df

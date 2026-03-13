@@ -1,0 +1,160 @@
+{% extends "base.html" %}
+{% block title %}Editor{% endblock %}
+
+{% block content %}
+<div class="flex flex-col h-[calc(100vh-8rem)]">
+    <!-- Tab Bar -->
+    <div class="flex items-center space-x-1 mb-3">
+        <button onclick="switchEditorMode('strategy')" id="tab-strategy"
+                class="px-4 py-2 rounded-t text-sm font-medium bg-blue-600 text-white">Strategy</button>
+        <button onclick="switchEditorMode('portfolio')" id="tab-portfolio"
+                class="px-4 py-2 rounded-t text-sm font-medium text-gray-400 hover:text-white">Portfolio</button>
+        <button onclick="switchEditorMode('module')" id="tab-module"
+                class="px-4 py-2 rounded-t text-sm font-medium text-gray-400 hover:text-white">Module</button>
+    </div>
+
+    <!-- Toolbar -->
+    <div class="card rounded-t p-3 flex items-center space-x-3 border-b border-gray-700">
+        <!-- Strategy toolbar -->
+        <div id="toolbar-strategy" class="flex items-center space-x-3">
+            <input type="text" id="strategy-name" placeholder="Strategy name"
+                   class="bg-gray-800 border border-gray-600 rounded px-3 py-1.5 text-gray-200 text-sm w-48 focus:outline-none focus:border-blue-500">
+            <select id="template-picker"
+                    class="bg-gray-800 border border-gray-600 rounded px-3 py-1.5 text-gray-200 text-sm focus:outline-none focus:border-blue-500">
+                <option value="">Load template...</option>
+                {% for tpl in templates %}
+                    <option value="{{ tpl }}">{{ tpl }}</option>
+                {% endfor %}
+            </select>
+            <button onclick="saveStrategy()"
+                    class="bg-green-600 hover:bg-green-700 text-white px-4 py-1.5 rounded text-sm font-medium">Save</button>
+        </div>
+
+        <!-- Portfolio toolbar -->
+        <div id="toolbar-portfolio" class="hidden flex items-center space-x-3">
+            <select id="portfolio-selector"
+                    class="bg-gray-800 border border-gray-600 rounded px-3 py-1.5 text-gray-200 text-sm focus:outline-none focus:border-blue-500">
+                <option value="">Select portfolio...</option>
+                {% for p in portfolios %}
+                    <option value="{{ p.name }}">{{ p.name }}</option>
+                {% endfor %}
+            </select>
+            <button onclick="savePortfolio()"
+                    class="bg-green-600 hover:bg-green-700 text-white px-4 py-1.5 rounded text-sm font-medium">Save</button>
+        </div>
+
+        <!-- Module toolbar -->
+        <div id="toolbar-module" class="hidden flex items-center space-x-3">
+            <span id="module-filename" class="text-sm text-gray-400">No file selected</span>
+            <button onclick="runModule()"
+                    class="bg-yellow-600 hover:bg-yellow-700 text-white px-4 py-1.5 rounded text-sm font-medium">Run</button>
+            <button onclick="saveModule()"
+                    class="bg-green-600 hover:bg-green-700 text-white px-4 py-1.5 rounded text-sm font-medium">Save</button>
+        </div>
+    </div>
+
+    <!-- Editor Area -->
+    <div class="flex flex-1 min-h-0">
+        <!-- File tree (module mode only) -->
+        <div id="file-tree" class="hidden w-56 card border-r border-gray-700 overflow-y-auto p-2 text-sm">
+            <div class="text-gray-400 font-semibold mb-2 px-1">Files</div>
+            <div id="file-tree-list">
+                {% for file in module_files %}
+                    <div class="px-2 py-1 rounded cursor-pointer hover:bg-gray-700 text-gray-300"
+                         onclick="loadModuleFile('{{ file }}')">{{ file }}</div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <!-- Monaco container -->
+        <div id="monaco-container" class="flex-1 min-h-0"></div>
+    </div>
+
+    <!-- Output Panel (module mode) -->
+    <div id="output-panel" class="hidden card border-t border-gray-700 h-40 overflow-y-auto p-3 font-mono text-xs text-gray-300">
+        <div class="text-gray-500 mb-1">Output:</div>
+        <pre id="output-content"></pre>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    let editor = null;
+    let currentMode = 'strategy';
+
+    // Init Monaco
+    require.config({ paths: { vs: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs' } });
+    require(['vs/editor/editor.main'], function () {
+        editor = monaco.editor.create(document.getElementById('monaco-container'), {
+            value: '# Write your strategy here\n',
+            language: 'python',
+            theme: 'vs-dark',
+            fontSize: 14,
+            minimap: { enabled: false },
+            automaticLayout: true,
+            scrollBeyondLastLine: false
+        });
+    });
+
+    function switchEditorMode(mode) {
+        currentMode = mode;
+        ['strategy', 'portfolio', 'module'].forEach(m => {
+            document.getElementById('tab-' + m).className =
+                m === mode
+                    ? 'px-4 py-2 rounded-t text-sm font-medium bg-blue-600 text-white'
+                    : 'px-4 py-2 rounded-t text-sm font-medium text-gray-400 hover:text-white';
+            document.getElementById('toolbar-' + m).classList.toggle('hidden', m !== mode);
+        });
+        document.getElementById('file-tree').classList.toggle('hidden', mode !== 'module');
+        document.getElementById('output-panel').classList.toggle('hidden', mode !== 'module');
+    }
+
+    function saveStrategy() {
+        const name = document.getElementById('strategy-name').value;
+        if (!name) { alert('Enter a strategy name'); return; }
+        fetch('/editor/strategy', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: name, code: editor.getValue() })
+        }).then(r => r.json()).then(d => showToast(d.message || 'Saved'));
+    }
+
+    function savePortfolio() {
+        const name = document.getElementById('portfolio-selector').value;
+        if (!name) return;
+        fetch('/editor/portfolio', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: name, config: editor.getValue() })
+        }).then(r => r.json()).then(d => showToast(d.message || 'Saved'));
+    }
+
+    function loadModuleFile(path) {
+        document.getElementById('module-filename').textContent = path;
+        fetch('/editor/module?path=' + encodeURIComponent(path))
+            .then(r => r.json())
+            .then(d => editor.setValue(d.content || ''));
+    }
+
+    function saveModule() {
+        const path = document.getElementById('module-filename').textContent;
+        if (path === 'No file selected') return;
+        fetch('/editor/module', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: path, content: editor.getValue() })
+        }).then(r => r.json()).then(d => showToast(d.message || 'Saved'));
+    }
+
+    function runModule() {
+        const el = document.getElementById('output-content');
+        el.textContent = 'Running...\n';
+        fetch('/editor/run', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ code: editor.getValue() })
+        }).then(r => r.json()).then(d => { el.textContent = d.output || d.error || ''; });
+    }
+</script>
+{% endblock %}

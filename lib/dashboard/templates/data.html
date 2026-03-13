@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Data Management{% endblock %}
+
+{% block content %}
+<div class="flex items-center justify-between mb-6">
+    <h1 class="text-2xl font-bold text-white">Data Management</h1>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <!-- Data Inventory -->
+    <div class="lg:col-span-2 card rounded-lg p-4">
+        <h2 class="text-sm font-semibold text-gray-400 mb-3">Data Inventory</h2>
+        <div class="overflow-x-auto">
+            <table class="w-full text-sm text-left">
+                <thead class="text-xs text-gray-400 uppercase border-b border-gray-700">
+                    <tr>
+                        <th class="px-4 py-2">Exchange</th>
+                        <th class="px-4 py-2">Symbol</th>
+                        <th class="px-4 py-2">Timeframe</th>
+                        <th class="px-4 py-2">Rows</th>
+                        <th class="px-4 py-2">Date Range</th>
+                    </tr>
+                </thead>
+                <tbody id="data-inventory"
+                       hx-get="/data/inventory"
+                       hx-trigger="load"
+                       hx-swap="innerHTML">
+                    {% include "partials/data_inventory.html" %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Download Form -->
+    <div class="card rounded-lg p-4">
+        <h2 class="text-sm font-semibold text-gray-400 mb-3">Download Data</h2>
+        <form hx-post="/data/download" hx-target="#download-status" hx-swap="innerHTML">
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm text-gray-400 mb-1">Exchange</label>
+                    <select name="exchange"
+                            class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-gray-200 text-sm focus:outline-none focus:border-blue-500">
+                        <option value="kraken">Kraken</option>
+                        <option value="oanda">Oanda</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm text-gray-400 mb-1">Symbol</label>
+                    <input type="text" name="symbol" placeholder="BTC/USD" required
+                           class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-gray-200 text-sm focus:outline-none focus:border-blue-500">
+                </div>
+                <div>
+                    <label class="block text-sm text-gray-400 mb-1">Timeframe</label>
+                    <select name="timeframe"
+                            class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-gray-200 text-sm focus:outline-none focus:border-blue-500">
+                        <option value="1m">1m</option>
+                        <option value="5m">5m</option>
+                        <option value="15m">15m</option>
+                        <option value="30m">30m</option>
+                        <option value="1h" selected>1h</option>
+                        <option value="4h">4h</option>
+                        <option value="1d">1d</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm text-gray-400 mb-1">Backfill Days</label>
+                    <input type="number" name="backfill_days" value="30" min="1" max="365"
+                           class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-gray-200 text-sm focus:outline-none focus:border-blue-500">
+                </div>
+            </div>
+            <button type="submit"
+                    class="w-full bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm font-medium mt-4">
+                Download
+            </button>
+        </form>
+        <div id="download-status" class="mt-3 text-sm"></div>
+    </div>
+</div>
+{% endblock %}

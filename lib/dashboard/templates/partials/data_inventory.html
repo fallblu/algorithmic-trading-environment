@@ -1,0 +1,13 @@
+{% for item in inventory|default([]) %}
+<tr class="border-b border-gray-700 hover:bg-gray-800">
+    <td class="px-4 py-2 text-gray-200">{{ item.exchange }}</td>
+    <td class="px-4 py-2 text-gray-200">{{ item.symbol }}</td>
+    <td class="px-4 py-2 text-gray-200">{{ item.timeframe }}</td>
+    <td class="px-4 py-2 text-gray-200">{{ item.rows }}</td>
+    <td class="px-4 py-2 text-gray-400">{{ item.start_date }} — {{ item.end_date }}</td>
+</tr>
+{% else %}
+<tr>
+    <td colspan="5" class="px-4 py-4 text-center text-gray-500">No data available. Download some data to get started.</td>
+</tr>
+{% endfor %}

@@ -1,222 +1,177 @@
-"""RiskManager — comprehensive pre-trade validation and portfolio risk checks."""
+"""RiskManager — enforced risk check pipeline for portfolios."""
+
+from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
 from datetime import datetime, timezone
-from decimal import Decimal
 
-from broker.base import Broker
-from config import RiskConfig
-from events import RiskEvent, get_event_bus
+from broker.base import Account, Broker
 from models.order import Order, OrderSide
-from risk.exposure import ExposureManager
+from models.position import Position
+from risk.rules import RiskConfig, RiskEvent, RiskLevel
 
 log = logging.getLogger(__name__)
 
 
-@dataclass
-class RiskCheckResult:
-    """Result of a single risk check."""
-    passed: bool
-    check_name: str
-    reason: str = ""
-
-
 class RiskManager:
-    """Comprehensive pre-trade risk checks and portfolio-level monitoring.
+    """Enforced risk management for portfolio trading.
 
-    Check pipeline (in order):
-        1. Kill switch
-        2. Max position size
-        3. Max order notional
-        4. Daily loss limit
-        5. Max drawdown limit
-        6. Portfolio exposure / concentration (via ExposureManager)
+    All checks are blocking — orders that violate constraints are rejected.
+    The kill switch halts all trading when max drawdown is breached.
     """
 
-    def __init__(
-        self,
-        max_position_size: Decimal = Decimal("1.0"),
-        max_order_value: Decimal = Decimal("100000"),
-        max_exposure: Decimal | None = None,
-        daily_loss_limit: Decimal | None = None,
-        max_drawdown_limit: Decimal | None = None,
-        max_leverage: Decimal | None = None,
-        max_concentration_pct: Decimal = Decimal("0.25"),
-        risk_config: RiskConfig | None = None,
-    ):
-        if risk_config is not None:
-            self.max_position_size = risk_config.max_position_size
-            self.max_order_value = risk_config.max_order_value
-            self.daily_loss_limit = risk_config.daily_loss_limit
-            self.max_drawdown_limit = risk_config.max_drawdown_limit
-            self.max_leverage = risk_config.max_leverage
-            max_exposure = risk_config.max_exposure
-            max_concentration_pct = risk_config.max_concentration_pct
-        else:
-            self.max_position_size = max_position_size
-            self.max_order_value = max_order_value
-            self.daily_loss_limit = daily_loss_limit
-            self.max_drawdown_limit = max_drawdown_limit
-            self.max_leverage = max_leverage
+    def __init__(self, config: RiskConfig) -> None:
+        self._config = config
+        self._kill_switch = False
+        self._peak_equity: float = 0.0
+        self._daily_start_equity: float = 0.0
+        self._current_day: str = ""
+        self._events: list[RiskEvent] = []
 
-        self.kill_switch = False
+    @property
+    def kill_switch_active(self) -> bool:
+        return self._kill_switch
 
-        # Daily PnL tracking
-        self._session_start_equity: Decimal | None = None
-        self._session_date: datetime | None = None
+    @property
+    def events(self) -> list[RiskEvent]:
+        return list(self._events)
 
-        # Drawdown tracking
-        self._high_water_mark: Decimal = Decimal("0")
-
-        # Exposure manager
-        self._exposure_mgr = ExposureManager(
-            max_gross_exposure=max_exposure,
-            max_concentration_pct=max_concentration_pct,
-        )
-
-    def check(self, order: Order, broker: Broker) -> bool:
-        """Validate an order against all risk limits. Returns True if allowed."""
-        results = self.check_all(order, broker)
-        return all(r.passed for r in results)
-
-    def check_all(self, order: Order, broker: Broker) -> list[RiskCheckResult]:
-        """Run all risk checks and return individual results."""
-        results = []
-
-        results.append(self._check_kill_switch(order))
-        if not results[-1].passed:
-            self._emit_risk_event(results[-1])
-            return results
-
-        results.append(self._check_position_size(order, broker))
-        results.append(self._check_order_notional(order))
-        results.append(self._check_daily_loss(broker))
-        results.append(self._check_drawdown(broker))
-        results.append(self._check_exposure(order, broker))
-
-        for result in results:
-            if not result.passed:
-                self._emit_risk_event(result)
-
-        return results
-
-    def _check_kill_switch(self, order: Order) -> RiskCheckResult:
-        if self.kill_switch:
-            return RiskCheckResult(
-                passed=False,
-                check_name="kill_switch",
-                reason=f"Kill switch active — rejecting order {order.id}",
-            )
-        return RiskCheckResult(passed=True, check_name="kill_switch")
-
-    def _check_position_size(self, order: Order, broker: Broker) -> RiskCheckResult:
-        current_pos = broker.get_position(order.instrument)
-        current_qty = current_pos.quantity if current_pos is not None else Decimal("0")
-
-        if order.side == OrderSide.BUY:
-            new_qty = current_qty + order.quantity
-        else:
-            if current_pos is not None and current_pos.side == OrderSide.BUY:
-                new_qty = current_qty - order.quantity
-                if new_qty < 0:
-                    new_qty = abs(new_qty)
-            else:
-                new_qty = current_qty + order.quantity
-
-        if new_qty > self.max_position_size:
-            return RiskCheckResult(
-                passed=False,
-                check_name="position_size",
-                reason=f"Position size {new_qty:.4f} exceeds max {self.max_position_size:.4f}",
-            )
-        return RiskCheckResult(passed=True, check_name="position_size")
-
-    def _check_order_notional(self, order: Order) -> RiskCheckResult:
-        if order.price is not None:
-            notional = order.quantity * order.price
-            if notional > self.max_order_value:
-                return RiskCheckResult(
-                    passed=False,
-                    check_name="order_notional",
-                    reason=f"Order notional {notional:.2f} exceeds max {self.max_order_value:.2f}",
-                )
-        return RiskCheckResult(passed=True, check_name="order_notional")
-
-    def _check_daily_loss(self, broker: Broker) -> RiskCheckResult:
-        if self.daily_loss_limit is None:
-            return RiskCheckResult(passed=True, check_name="daily_loss")
-
-        account = broker.get_account()
-        now = datetime.now(timezone.utc)
-
-        if self._session_date is None or now.date() != self._session_date.date():
-            self._session_start_equity = account.equity
-            self._session_date = now
-            return RiskCheckResult(passed=True, check_name="daily_loss")
-
-        daily_pnl = account.equity - self._session_start_equity
-
-        if daily_pnl < self.daily_loss_limit:
-            self.kill_switch = True
-            return RiskCheckResult(
-                passed=False,
-                check_name="daily_loss",
-                reason=f"Daily loss {daily_pnl:.2f} exceeds limit {self.daily_loss_limit:.2f} — kill switch engaged",
-            )
-        return RiskCheckResult(passed=True, check_name="daily_loss")
-
-    def _check_drawdown(self, broker: Broker) -> RiskCheckResult:
-        if self.max_drawdown_limit is None:
-            return RiskCheckResult(passed=True, check_name="drawdown")
-
-        account = broker.get_account()
-        equity = account.equity
-
-        if equity > self._high_water_mark:
-            self._high_water_mark = equity
-
-        if self._high_water_mark <= 0:
-            return RiskCheckResult(passed=True, check_name="drawdown")
-
-        drawdown = (self._high_water_mark - equity) / self._high_water_mark
-
-        if drawdown > self.max_drawdown_limit:
-            return RiskCheckResult(
-                passed=False,
-                check_name="drawdown",
-                reason=f"Drawdown {drawdown:.2%} exceeds limit {self.max_drawdown_limit:.2%}",
-            )
-        return RiskCheckResult(passed=True, check_name="drawdown")
-
-    def _check_exposure(self, order: Order, broker: Broker) -> RiskCheckResult:
-        result = self._exposure_mgr.check_order(order, broker)
-        if not result.passed:
-            return RiskCheckResult(
-                passed=False,
-                check_name="exposure",
-                reason=result.reason,
-            )
-        return RiskCheckResult(passed=True, check_name="exposure")
-
-    def _emit_risk_event(self, result: RiskCheckResult) -> None:
-        try:
-            bus = get_event_bus()
-            bus.publish(RiskEvent(reason=f"[{result.check_name}] {result.reason}"))
-        except Exception:
-            log.debug("Could not emit risk event", exc_info=True)
-
-    def reset_daily(self) -> None:
-        """Reset daily PnL tracking. Call at start of each trading day."""
-        self._session_start_equity = None
-        self._session_date = None
-        log.info("Daily risk counters reset")
+    @property
+    def config(self) -> RiskConfig:
+        return self._config
 
     def reset_kill_switch(self) -> None:
-        """Manually reset the kill switch."""
-        self.kill_switch = False
-        log.info("Risk kill switch disengaged")
+        self._kill_switch = False
 
-    def update_high_water_mark(self, equity: Decimal) -> None:
-        """Manually set high-water mark (e.g., at session start)."""
-        self._high_water_mark = equity
+    def check_order(self, order: Order, broker: Broker) -> tuple[bool, str]:
+        """Check if an order passes all risk rules.
+
+        Returns (allowed, reason). If not allowed, reason explains why.
+        """
+        if self._kill_switch:
+            return False, "Kill switch active — trading halted"
+
+        account = broker.get_account()
+
+        # Update peak equity and daily tracking
+        self._update_tracking(account)
+
+        # 1. Max position size check
+        if account.equity > 0:
+            order_notional = (order.price or 0) * order.quantity
+            if order.price is None:
+                # Market order — estimate using current equity as proxy
+                order_notional = account.equity * 0.1  # rough estimate
+            position_pct = order_notional / account.equity
+            if position_pct > self._config.max_position_pct:
+                reason = (
+                    f"Position size {position_pct:.1%} exceeds max "
+                    f"{self._config.max_position_pct:.1%}"
+                )
+                self._add_event("max_position", reason, RiskLevel.WARNING)
+                return False, reason
+
+        # 2. Exposure checks
+        positions = broker.get_positions()
+        if account.equity > 0:
+            gross, net = self._compute_exposure(positions, account.equity)
+
+            if gross > self._config.max_gross_exposure:
+                reason = (
+                    f"Gross exposure {gross:.2f}x exceeds max "
+                    f"{self._config.max_gross_exposure:.2f}x"
+                )
+                self._add_event("max_gross_exposure", reason, RiskLevel.WARNING)
+                return False, reason
+
+            if abs(net) > self._config.max_net_exposure:
+                reason = (
+                    f"Net exposure {net:.2f}x exceeds max "
+                    f"{self._config.max_net_exposure:.2f}x"
+                )
+                self._add_event("max_net_exposure", reason, RiskLevel.WARNING)
+                return False, reason
+
+        return True, ""
+
+    def check_portfolio(self, broker: Broker) -> list[RiskEvent]:
+        """Run portfolio-level risk checks. Returns list of violations.
+
+        Triggers kill switch if max drawdown is breached.
+        """
+        violations: list[RiskEvent] = []
+        account = broker.get_account()
+        self._update_tracking(account)
+
+        # Max drawdown check
+        if self._peak_equity > 0:
+            drawdown = (self._peak_equity - account.equity) / self._peak_equity
+            if drawdown >= self._config.max_drawdown_pct:
+                event = RiskEvent(
+                    rule="max_drawdown",
+                    message=(
+                        f"Drawdown {drawdown:.1%} exceeds max "
+                        f"{self._config.max_drawdown_pct:.1%} — KILL SWITCH ACTIVATED"
+                    ),
+                    level=RiskLevel.CRITICAL,
+                )
+                violations.append(event)
+                self._events.append(event)
+                self._kill_switch = True
+                log.critical("Kill switch activated: drawdown %.1f%%", drawdown * 100)
+
+        # Daily loss check
+        if self._daily_start_equity > 0:
+            daily_loss = (self._daily_start_equity - account.equity) / self._daily_start_equity
+            if daily_loss >= self._config.max_daily_loss_pct:
+                event = RiskEvent(
+                    rule="max_daily_loss",
+                    message=(
+                        f"Daily loss {daily_loss:.1%} exceeds max "
+                        f"{self._config.max_daily_loss_pct:.1%} — KILL SWITCH ACTIVATED"
+                    ),
+                    level=RiskLevel.CRITICAL,
+                )
+                violations.append(event)
+                self._events.append(event)
+                self._kill_switch = True
+                log.critical("Kill switch activated: daily loss %.1f%%", daily_loss * 100)
+
+        return violations
+
+    def _update_tracking(self, account: Account) -> None:
+        """Update peak equity and daily tracking."""
+        if account.equity > self._peak_equity:
+            self._peak_equity = account.equity
+
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        if today != self._current_day:
+            self._current_day = today
+            self._daily_start_equity = account.equity
+
+        if self._daily_start_equity == 0:
+            self._daily_start_equity = account.equity
+
+    def _compute_exposure(
+        self, positions: list[Position], equity: float
+    ) -> tuple[float, float]:
+        """Compute gross and net exposure as multiples of equity."""
+        long_notional = 0.0
+        short_notional = 0.0
+
+        for pos in positions:
+            notional = pos.quantity * pos.avg_entry_price
+            from models.position import PositionSide
+            if pos.side == PositionSide.LONG:
+                long_notional += notional
+            else:
+                short_notional += notional
+
+        gross = (long_notional + short_notional) / equity if equity > 0 else 0
+        net = (long_notional - short_notional) / equity if equity > 0 else 0
+        return gross, net
+
+    def _add_event(self, rule: str, message: str, level: RiskLevel) -> None:
+        event = RiskEvent(rule=rule, message=message, level=level)
+        self._events.append(event)
+        log.warning("Risk violation [%s]: %s", rule, message)

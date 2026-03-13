@@ -1,262 +1,228 @@
-"""OandaBroker — live order execution via OANDA v20 REST API."""
+"""OandaBroker — live order execution via OANDA REST API."""
+
+from __future__ import annotations
 
 import logging
-import os
 from datetime import datetime, timezone
 from decimal import Decimal
 
 import requests
 
-from broker.base import Broker
-from constants import normalize_symbol, denormalize_symbol
-from exceptions import OandaAPIError
-from models.account import Account
-from models.instrument import Instrument
+from broker.base import Account, Broker
+from models.fill import Fill
 from models.order import Order, OrderSide, OrderStatus, OrderType
-from models.position import Position
+from models.position import Position, PositionSide
 
 log = logging.getLogger(__name__)
 
+BASE_URL = "https://api-fxpractice.oanda.com/v3"
+
+SYMBOL_MAP = {
+    "EUR/USD": "EUR_USD",
+    "GBP/USD": "GBP_USD",
+    "USD/JPY": "USD_JPY",
+    "AUD/USD": "AUD_USD",
+    "USD/CAD": "USD_CAD",
+    "NZD/USD": "NZD_USD",
+    "USD/CHF": "USD_CHF",
+    "EUR/GBP": "EUR_GBP",
+    "EUR/JPY": "EUR_JPY",
+    "GBP/JPY": "GBP_JPY",
+}
+
 
 class OandaBroker(Broker):
-    """Live broker for OANDA forex trading.
+    """Live OANDA exchange broker.
 
-    Uses OANDA v20 REST API for order management, position tracking,
-    and account queries. Supports market, limit, stop, and trailing stop orders.
+    Uses Decimal at the API boundary for precision, converts back
+    to float for internal model compatibility.
     """
 
-    def __init__(self):
-        self._token = os.environ.get("OANDA_API_TOKEN", "")
-        self._account_id = os.environ.get("OANDA_ACCOUNT_ID", "")
-        environment = os.environ.get("OANDA_ENVIRONMENT", "practice")
-
-        if not self._token or not self._account_id:
-            raise OandaAPIError(
-                "OANDA_API_TOKEN and OANDA_ACCOUNT_ID must be set"
-            )
-
-        if environment == "live":
-            self._base_url = "https://api-fxtrade.oanda.com"
-        else:
-            self._base_url = "https://api-fxpractice.oanda.com"
-
-        self._headers = {
-            "Authorization": f"Bearer {self._token}",
-            "Content-Type": "application/json",
-        }
-
+    def __init__(
+        self,
+        api_key: str,
+        account_id: str,
+        tick_size: float = 0.00001,
+        lot_size: float = 1.0,
+    ) -> None:
+        self._api_key = api_key
+        self._account_id = account_id
+        self._tick_size = Decimal(str(tick_size))
+        self._lot_size = Decimal(str(lot_size))
         self._orders: dict[str, Order] = {}
-        self._oanda_to_local: dict[str, str] = {}
 
-    def submit_order(self, order: Order) -> Order:
-        oanda_instrument = normalize_symbol(order.instrument.symbol)
+    def submit_order(self, order: Order) -> str:
+        """Submit order to OANDA REST API."""
+        instrument = SYMBOL_MAP.get(order.symbol, order.symbol.replace("/", "_"))
+        qty = Decimal(str(order.quantity)).quantize(self._lot_size)
 
-        # Build order body
-        units = str(order.quantity if order.side == OrderSide.BUY else -order.quantity)
+        # OANDA uses negative units for sell
+        units = str(qty) if order.side == OrderSide.BUY else str(-qty)
 
         if order.type == OrderType.MARKET:
             body = {
                 "order": {
                     "type": "MARKET",
-                    "instrument": oanda_instrument,
+                    "instrument": instrument,
                     "units": units,
                     "timeInForce": "FOK",
                 }
             }
-        elif order.type == OrderType.LIMIT:
+        else:
+            price = Decimal(str(order.price)).quantize(self._tick_size)
             body = {
                 "order": {
                     "type": "LIMIT",
-                    "instrument": oanda_instrument,
+                    "instrument": instrument,
                     "units": units,
-                    "price": str(order.price),
+                    "price": str(price),
                     "timeInForce": "GTC",
                 }
             }
-        elif order.type == OrderType.STOP:
-            body = {
-                "order": {
-                    "type": "STOP",
-                    "instrument": oanda_instrument,
-                    "units": units,
-                    "price": str(order.stop_price),
-                    "timeInForce": "GTC",
-                }
-            }
-        else:
-            body = {
-                "order": {
-                    "type": "MARKET",
-                    "instrument": oanda_instrument,
-                    "units": units,
-                    "timeInForce": "FOK",
-                }
-            }
 
-        url = f"{self._base_url}/v3/accounts/{self._account_id}/orders"
-        resp = requests.post(url, headers=self._headers, json=body, timeout=30)
-        resp.raise_for_status()
-        data = resp.json()
+        try:
+            resp = self._request("POST", f"/accounts/{self._account_id}/orders", json=body)
+            if "orderFillTransaction" in resp:
+                order.status = OrderStatus.FILLED
+                fill_tx = resp["orderFillTransaction"]
+                order.fill_price = float(fill_tx.get("price", 0))
+                order.filled_quantity = abs(float(fill_tx.get("units", 0)))
+            elif "orderCreateTransaction" in resp:
+                order.status = OrderStatus.OPEN
+            else:
+                order.status = OrderStatus.REJECTED
 
-        # Extract order ID from response
-        fill_data = data.get("orderFillTransaction", {})
-        create_data = data.get("orderCreateTransaction", {})
+            self._orders[order.id] = order
+            return order.id
+        except Exception as e:
+            order.status = OrderStatus.REJECTED
+            log.error("Failed to submit order to OANDA: %s", e)
+            raise
 
-        oanda_id = fill_data.get("id") or create_data.get("id", "")
-        if oanda_id:
-            order.metadata["oanda_order_id"] = oanda_id
-            self._oanda_to_local[oanda_id] = order.id
-
-        if fill_data:
-            order.status = OrderStatus.FILLED
-            order.filled_quantity = order.quantity
-            price = fill_data.get("price")
-            if price:
-                order.average_fill_price = Decimal(price)
-        else:
-            order.status = OrderStatus.OPEN
-
-        order.updated_at = datetime.now(timezone.utc)
-        self._orders[order.id] = order
-        log.info("OANDA order submitted: %s -> %s", order.id, oanda_id)
-        return order
-
-    def cancel_order(self, order_id: str) -> Order:
-        order = self._orders[order_id]
-        oanda_id = order.metadata.get("oanda_order_id")
-        if oanda_id is None:
-            raise ValueError(f"Order {order_id} has no OANDA order ID")
-
-        url = f"{self._base_url}/v3/accounts/{self._account_id}/orders/{oanda_id}/cancel"
-        resp = requests.put(url, headers=self._headers, timeout=30)
-        resp.raise_for_status()
-
-        order.status = OrderStatus.CANCELLED
-        order.updated_at = datetime.now(timezone.utc)
-        log.info("OANDA order cancelled: %s", order_id)
-        return order
-
-    def get_order(self, order_id: str) -> Order:
-        order = self._orders.get(order_id)
-        if order is None:
-            raise KeyError(f"Order {order_id} not found")
-        return order
-
-    def get_open_orders(self, instrument: Instrument | None = None) -> list[Order]:
-        url = f"{self._base_url}/v3/accounts/{self._account_id}/pendingOrders"
-        resp = requests.get(url, headers=self._headers, timeout=30)
-        resp.raise_for_status()
-        data = resp.json()
-
-        orders = []
-        for oo in data.get("orders", []):
-            oanda_id = oo.get("id", "")
-            local_id = self._oanda_to_local.get(oanda_id)
-            if local_id and local_id in self._orders:
-                orders.append(self._orders[local_id])
-
-        if instrument is not None:
-            orders = [o for o in orders if o.instrument.symbol == instrument.symbol]
-
-        return orders
-
-    def get_position(self, instrument: Instrument) -> Position | None:
-        oanda_inst = normalize_symbol(instrument.symbol)
-        url = f"{self._base_url}/v3/accounts/{self._account_id}/positions/{oanda_inst}"
-
-        resp = requests.get(url, headers=self._headers, timeout=30)
-        if resp.status_code == 404:
-            return None
-        resp.raise_for_status()
-        data = resp.json()
-
-        pos_data = data.get("position", {})
-        long_units = int(pos_data.get("long", {}).get("units", "0"))
-        short_units = abs(int(pos_data.get("short", {}).get("units", "0")))
-
-        if long_units > 0:
-            avg_price = Decimal(pos_data["long"].get("averagePrice", "0"))
-            unrealized = Decimal(pos_data["long"].get("unrealizedPL", "0"))
-            return Position(
-                instrument=instrument,
-                side=OrderSide.BUY,
-                quantity=Decimal(str(long_units)),
-                entry_price=avg_price,
-                unrealized_pnl=unrealized,
-                last_updated=datetime.now(timezone.utc),
-            )
-        elif short_units > 0:
-            avg_price = Decimal(pos_data["short"].get("averagePrice", "0"))
-            unrealized = Decimal(pos_data["short"].get("unrealizedPL", "0"))
-            return Position(
-                instrument=instrument,
-                side=OrderSide.SELL,
-                quantity=Decimal(str(short_units)),
-                entry_price=avg_price,
-                unrealized_pnl=unrealized,
-                last_updated=datetime.now(timezone.utc),
-            )
-
-        return None
+    def cancel_order(self, order_id: str) -> bool:
+        """Cancel an open order on OANDA."""
+        try:
+            self._request("PUT", f"/accounts/{self._account_id}/orders/{order_id}/cancel")
+            if order_id in self._orders:
+                self._orders[order_id].status = OrderStatus.CANCELLED
+            return True
+        except Exception as e:
+            log.error("Failed to cancel order %s: %s", order_id, e)
+            return False
 
     def get_positions(self) -> list[Position]:
-        url = f"{self._base_url}/v3/accounts/{self._account_id}/openPositions"
-        resp = requests.get(url, headers=self._headers, timeout=30)
-        resp.raise_for_status()
-        data = resp.json()
+        """Get open positions from OANDA."""
+        try:
+            resp = self._request("GET", f"/accounts/{self._account_id}/openPositions")
+            positions = []
+            for pos_data in resp.get("positions", []):
+                instrument = pos_data.get("instrument", "").replace("_", "/")
+                long_units = float(pos_data.get("long", {}).get("units", 0))
+                short_units = abs(float(pos_data.get("short", {}).get("units", 0)))
 
-        positions = []
-        for pos_data in data.get("positions", []):
-            oanda_inst = pos_data.get("instrument", "")
-            our_symbol = denormalize_symbol(oanda_inst)
+                if long_units > 0:
+                    avg_price = float(pos_data.get("long", {}).get("averagePrice", 0))
+                    unrealized = float(pos_data.get("long", {}).get("unrealizedPL", 0))
+                    positions.append(Position(
+                        symbol=instrument,
+                        side=PositionSide.LONG,
+                        quantity=long_units,
+                        avg_entry_price=avg_price,
+                        unrealized_pnl=unrealized,
+                    ))
+                if short_units > 0:
+                    avg_price = float(pos_data.get("short", {}).get("averagePrice", 0))
+                    unrealized = float(pos_data.get("short", {}).get("unrealizedPL", 0))
+                    positions.append(Position(
+                        symbol=instrument,
+                        side=PositionSide.SHORT,
+                        quantity=short_units,
+                        avg_entry_price=avg_price,
+                        unrealized_pnl=unrealized,
+                    ))
+            return positions
+        except Exception as e:
+            log.error("Failed to get positions: %s", e)
+            return []
 
-            long_units = int(pos_data.get("long", {}).get("units", "0"))
-            short_units = abs(int(pos_data.get("short", {}).get("units", "0")))
-
-            instrument = Instrument(
-                symbol=our_symbol,
-                base=our_symbol.split("/")[0],
-                quote=our_symbol.split("/")[1] if "/" in our_symbol else "USD",
-                exchange="oanda",
-                asset_class="forex",
-                tick_size=Decimal("0.00001"),
-                lot_size=Decimal("1"),
-                min_notional=Decimal("1"),
-            )
-
-            if long_units > 0:
-                positions.append(Position(
-                    instrument=instrument,
-                    side=OrderSide.BUY,
-                    quantity=Decimal(str(long_units)),
-                    entry_price=Decimal(pos_data["long"].get("averagePrice", "0")),
+    def get_open_orders(self) -> list[Order]:
+        """Get pending orders from OANDA."""
+        try:
+            resp = self._request("GET", f"/accounts/{self._account_id}/pendingOrders")
+            orders = []
+            for odata in resp.get("orders", []):
+                units = float(odata.get("units", 0))
+                orders.append(Order(
+                    symbol=odata.get("instrument", "").replace("_", "/"),
+                    side=OrderSide.BUY if units > 0 else OrderSide.SELL,
+                    type=OrderType.LIMIT if odata.get("type") == "LIMIT" else OrderType.MARKET,
+                    quantity=abs(units),
+                    price=float(odata.get("price", 0)) or None,
                 ))
-            elif short_units > 0:
-                positions.append(Position(
-                    instrument=instrument,
-                    side=OrderSide.SELL,
-                    quantity=Decimal(str(short_units)),
-                    entry_price=Decimal(pos_data["short"].get("averagePrice", "0")),
-                ))
-
-        return positions
+            return orders
+        except Exception as e:
+            log.error("Failed to get open orders: %s", e)
+            return []
 
     def get_account(self) -> Account:
-        url = f"{self._base_url}/v3/accounts/{self._account_id}/summary"
-        resp = requests.get(url, headers=self._headers, timeout=30)
-        resp.raise_for_status()
-        data = resp.json()
+        """Get account summary from OANDA."""
+        try:
+            resp = self._request("GET", f"/accounts/{self._account_id}/summary")
+            acct = resp.get("account", {})
+            return Account(
+                cash=float(acct.get("balance", 0)),
+                equity=float(acct.get("NAV", 0)),
+                unrealized_pnl=float(acct.get("unrealizedPL", 0)),
+                realized_pnl=float(acct.get("pl", 0)),
+            )
+        except Exception as e:
+            log.error("Failed to get account: %s", e)
+            return Account()
 
-        acct = data.get("account", {})
-        balance = Decimal(acct.get("balance", "0"))
-        unrealized = Decimal(acct.get("unrealizedPL", "0"))
-        margin_used = Decimal(acct.get("marginUsed", "0"))
-        equity = Decimal(acct.get("NAV", "0"))
+    def get_fills(self, since: datetime | None = None) -> list[Fill]:
+        """Get trade fills from OANDA."""
+        try:
+            params = {"type": "ORDER_FILL", "count": 100}
+            if since:
+                params["from"] = since.isoformat()
+            resp = self._request(
+                "GET", f"/accounts/{self._account_id}/transactions", params=params
+            )
+            fills = []
+            for tx in resp.get("transactions", []):
+                if tx.get("type") != "ORDER_FILL":
+                    continue
+                units = float(tx.get("units", 0))
+                fills.append(Fill(
+                    order_id=tx.get("orderID", ""),
+                    symbol=tx.get("instrument", "").replace("_", "/"),
+                    side=OrderSide.BUY if units > 0 else OrderSide.SELL,
+                    quantity=abs(units),
+                    price=float(tx.get("price", 0)),
+                    fee=abs(float(tx.get("commission", 0))),
+                    timestamp=datetime.fromisoformat(
+                        tx.get("time", "").replace("Z", "+00:00")
+                    ),
+                ))
+            return fills
+        except Exception as e:
+            log.error("Failed to get fills: %s", e)
+            return []
 
-        return Account(
-            balances={"USD": balance},
-            equity=equity,
-            margin_used=margin_used,
-            margin_available=equity - margin_used,
-            unrealized_pnl=unrealized,
+    def _request(
+        self,
+        method: str,
+        path: str,
+        json: dict | None = None,
+        params: dict | None = None,
+    ) -> dict:
+        """Make authenticated OANDA API request."""
+        headers = {
+            "Authorization": f"Bearer {self._api_key}",
+            "Content-Type": "application/json",
+        }
+        resp = requests.request(
+            method, f"{BASE_URL}{path}", headers=headers, json=json, params=params, timeout=30
         )
+        resp.raise_for_status()
+        return resp.json()

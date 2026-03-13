@@ -1,0 +1,188 @@
+{% extends "base.html" %}
+{% block title %}Chart Builder{% endblock %}
+
+{% block content %}
+<div class="flex h-[calc(100vh-8rem)] gap-4">
+    <!-- Left Config Sidebar -->
+    <div class="w-72 flex-shrink-0 card rounded-lg p-4 overflow-y-auto">
+        <h2 class="text-lg font-bold text-white mb-4">Chart Config</h2>
+
+        <!-- Symbol -->
+        <div class="mb-4">
+            <label class="block text-sm text-gray-400 mb-1">Symbol</label>
+            <input type="text" id="chart-symbol" placeholder="BTC/USD"
+                   class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-gray-200 text-sm focus:outline-none focus:border-blue-500">
+        </div>
+
+        <!-- Timeframe -->
+        <div class="mb-4">
+            <label class="block text-sm text-gray-400 mb-1">Timeframe</label>
+            <select id="chart-timeframe"
+                    class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-gray-200 text-sm focus:outline-none focus:border-blue-500">
+                <option value="1m">1m</option>
+                <option value="5m">5m</option>
+                <option value="15m">15m</option>
+                <option value="30m">30m</option>
+                <option value="1h" selected>1h</option>
+                <option value="4h">4h</option>
+                <option value="1d">1d</option>
+            </select>
+        </div>
+
+        <!-- Date Range -->
+        <div class="mb-4">
+            <label class="block text-sm text-gray-400 mb-1">Start Date</label>
+            <input type="date" id="chart-start"
+                   class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-gray-200 text-sm focus:outline-none focus:border-blue-500">
+        </div>
+        <div class="mb-4">
+            <label class="block text-sm text-gray-400 mb-1">End Date</label>
+            <input type="date" id="chart-end"
+                   class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-gray-200 text-sm focus:outline-none focus:border-blue-500">
+        </div>
+
+        <!-- Chart Type -->
+        <div class="mb-4">
+            <label class="block text-sm text-gray-400 mb-2">Chart Type</label>
+            <div class="flex items-center space-x-4">
+                <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer">
+                    <input type="radio" name="chart-type" value="candlestick" checked
+                           class="text-blue-500 focus:ring-blue-500">
+                    <span>Candlestick</span>
+                </label>
+                <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer">
+                    <input type="radio" name="chart-type" value="line"
+                           class="text-blue-500 focus:ring-blue-500">
+                    <span>Line</span>
+                </label>
+            </div>
+        </div>
+
+        <!-- Overlays -->
+        <div class="mb-4">
+            <label class="block text-sm text-gray-400 mb-2">Overlays</label>
+            <div id="overlay-checkboxes" class="space-y-1">
+                <!-- Populated via JS -->
+            </div>
+        </div>
+
+        <!-- Subplots -->
+        <div class="mb-4">
+            <label class="block text-sm text-gray-400 mb-2">Subplots</label>
+            <div id="subplot-checkboxes" class="space-y-1">
+                <!-- Populated via JS -->
+            </div>
+        </div>
+
+        <!-- Build Button -->
+        <button onclick="buildChart()"
+                class="w-full bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm font-medium mt-2">
+            Build Chart
+        </button>
+
+        <!-- Save / Load Layout -->
+        <div class="mt-6 pt-4 border-t border-gray-700">
+            <h3 class="text-sm font-semibold text-gray-400 mb-3">Layouts</h3>
+            <div class="flex space-x-2 mb-3">
+                <input type="text" id="layout-name" placeholder="Layout name"
+                       class="flex-1 bg-gray-800 border border-gray-600 rounded px-3 py-1.5 text-gray-200 text-sm focus:outline-none focus:border-blue-500">
+                <button onclick="saveLayout()"
+                        class="bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded text-sm font-medium">Save</button>
+            </div>
+            <select id="layout-selector" onchange="loadLayout(this.value)"
+                    class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-1.5 text-gray-200 text-sm focus:outline-none focus:border-blue-500">
+                <option value="">Load layout...</option>
+                {% for layout in layouts|default([]) %}
+                    <option value="{{ layout }}">{{ layout }}</option>
+                {% endfor %}
+            </select>
+        </div>
+    </div>
+
+    <!-- Chart Display Area -->
+    <div class="flex-1 card rounded-lg p-4 flex flex-col min-w-0">
+        <div id="chart-display" class="flex-1 min-h-0"></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    function getChartConfig() {
+        return {
+            symbol: document.getElementById('chart-symbol').value,
+            timeframe: document.getElementById('chart-timeframe').value,
+            start: document.getElementById('chart-start').value,
+            end: document.getElementById('chart-end').value,
+            chart_type: document.querySelector('input[name="chart-type"]:checked').value,
+            overlays: [...document.querySelectorAll('#overlay-checkboxes input:checked')].map(el => el.value),
+            subplots: [...document.querySelectorAll('#subplot-checkboxes input:checked')].map(el => el.value)
+        };
+    }
+
+    function buildChart() {
+        const config = getChartConfig();
+        if (!config.symbol) { showToast('Enter a symbol', 'error'); return; }
+        fetch('/charts/build', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(config)
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.error) { showToast(data.error, 'error'); return; }
+            Plotly.react('chart-display', data.data, data.layout, { responsive: true });
+        });
+    }
+
+    function saveLayout() {
+        const name = document.getElementById('layout-name').value;
+        if (!name) { showToast('Enter a layout name', 'error'); return; }
+        fetch('/charts/layouts', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: name, config: getChartConfig() })
+        })
+        .then(r => r.json())
+        .then(d => showToast(d.message || 'Layout saved'));
+    }
+
+    function loadLayout(name) {
+        if (!name) return;
+        fetch('/charts/layouts/' + encodeURIComponent(name))
+            .then(r => r.json())
+            .then(config => {
+                if (config.symbol) document.getElementById('chart-symbol').value = config.symbol;
+                if (config.timeframe) document.getElementById('chart-timeframe').value = config.timeframe;
+                if (config.start) document.getElementById('chart-start').value = config.start;
+                if (config.end) document.getElementById('chart-end').value = config.end;
+                if (config.chart_type) {
+                    document.querySelector(`input[name="chart-type"][value="${config.chart_type}"]`).checked = true;
+                }
+                buildChart();
+            });
+    }
+
+    // Load available overlays and subplots
+    fetch('/charts/indicators')
+        .then(r => r.json())
+        .then(data => {
+            const overlayContainer = document.getElementById('overlay-checkboxes');
+            (data.overlays || []).forEach(name => {
+                overlayContainer.innerHTML += `
+                    <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer">
+                        <input type="checkbox" value="${name}" class="text-blue-500 focus:ring-blue-500">
+                        <span>${name}</span>
+                    </label>`;
+            });
+            const subplotContainer = document.getElementById('subplot-checkboxes');
+            (data.subplots || []).forEach(name => {
+                subplotContainer.innerHTML += `
+                    <label class="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer">
+                        <input type="checkbox" value="${name}" class="text-blue-500 focus:ring-blue-500">
+                        <span>${name}</span>
+                    </label>`;
+            });
+        });
+</script>
+{% endblock %}

@@ -1,20 +1,21 @@
+"""Fill — executed trade fill."""
+
+from __future__ import annotations
+
 from dataclasses import dataclass
 from datetime import datetime
-from decimal import Decimal
 
-from models.instrument import Instrument
 from models.order import OrderSide
 
 
 @dataclass(frozen=True)
 class Fill:
     order_id: str
-    instrument: Instrument
+    symbol: str
     side: OrderSide
-    quantity: Decimal
-    price: Decimal
-    fee: Decimal
-    fee_currency: str
+    quantity: float
+    price: float
+    fee: float
     timestamp: datetime
-    is_maker: bool = False
-    slippage: Decimal = Decimal("0")
+    strategy_id: str = ""
+    slippage: float = 0.0
